@@ -16,16 +16,20 @@
 		"url": "https://github.com/adhubapp/n8n-nodes-adhubapp.git"
 	},
 	"scripts": {
+		"preinstall": "node scripts/verify-install.js",
 		"build": "n8n-node build",
 		"build:watch": "tsc --watch",
-		"dev": "n8n-node dev",
+		"dev": "n8n-node dev --external-n8n",
+		"dev:server": "node scripts/start-dev-server.js",
 		"lint": "n8n-node lint",
 		"lint:fix": "n8n-node lint --fix",
 		"release": "n8n-node release",
 		"prepublishOnly": "n8n-node prerelease"
 	},
 	"files": [
-		"dist"
+		"dist",
+		"scripts/verify-install.js",
+		"scripts/start-dev-server.js"
 	],
 	"n8n": {
 		"n8nNodesApiVersion": 1,
@@ -34,7 +38,8 @@
 			"dist/credentials/AdhubAppApi.credentials.js"
 		],
 		"nodes": [
-			"dist/nodes/AdhubApp/AdhubApp.node.js"
+			"dist/nodes/AdhubApp/AdhubApp.node.js",
+			"dist/nodes/AdhubApp/AdhubAppTrigger.node.js"
 		]
 	},
 	"devDependencies": {

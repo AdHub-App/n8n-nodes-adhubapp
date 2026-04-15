@@ -1,12 +1,20 @@
-import type { IExecuteFunctions, INodeExecutionData } from 'n8n-workflow';
+import type { IExecuteFunctions, INodeExecutionData, JsonObject } from 'n8n-workflow';
+import { NodeApiError, NodeOperationError } from 'n8n-workflow';
 
-import { buildRequestOptions, parseJson, JsonRecord } from '../helpers';
+import { type ApiConfig, buildRequestOptions, parseJson, JsonRecord } from '../helpers';
+
+type LeadNoteOperations =
+	| 'listLeadNotes'
+	| 'createLeadNote'
+	| 'getLeadNote'
+	| 'updateLeadNote'
+	| 'deleteLeadNote';
 
 async function handleLeadNotes(
 	ctx: IExecuteFunctions,
 	itemIndex: number,
-	operation: string,
-	apiToken: string,
+	operation: LeadNoteOperations,
+	apiConfig: ApiConfig,
 ): Promise<INodeExecutionData> {
 	const leadId = ctx.getNodeParameter('leadId', itemIndex, '') as string;
 	const noteId = ctx.getNodeParameter('noteId', itemIndex, '') as string;
@@ -45,7 +53,10 @@ async function handleLeadNotes(
 			endpoint = `/leads/${leadId}/notes/${noteId}`;
 			break;
 		default:
-			throw new Error(`Unsupported operation for Lead Notes ${operation}`);
+			throw new NodeOperationError(ctx.getNode(), `Unsupported operation: ${operation}`, {
+				itemIndex,
+				description: 'Check the selected operation',
+			});
 	}
 
 	let body;
@@ -62,13 +73,17 @@ async function handleLeadNotes(
 	const options = buildRequestOptions({
 		method,
 		endpoint,
-		apiToken,
+		apiConfig,
 		qs,
 		body,
 	});
 
-	const response = await ctx.helpers.request(options);
-	return { json: response };
+	try {
+		const response = await ctx.helpers.request(options);
+		return { json: response };
+	} catch (error) {
+		throw new NodeApiError(ctx.getNode(), error as unknown as JsonObject, { itemIndex });
+	}
 }
 
 export { handleLeadNotes };

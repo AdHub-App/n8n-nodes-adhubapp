@@ -1,12 +1,23 @@
-import type { IExecuteFunctions, INodeExecutionData } from 'n8n-workflow';
+import type { IExecuteFunctions, INodeExecutionData, JsonObject } from 'n8n-workflow';
+import { NodeApiError, NodeOperationError } from 'n8n-workflow';
 
-import { buildRequestOptions, parseJson, JsonRecord } from '../helpers';
+import { type ApiConfig, buildRequestOptions, parseJson, JsonRecord } from '../helpers';
+
+type TaskOperations =
+	| 'listTasks'
+	| 'createTask'
+	| 'getTask'
+	| 'updateTask'
+	| 'deleteTask'
+	| 'completeTask'
+	| 'bulkCompleteTasks'
+	| 'bulkDeleteTasks';
 
 async function handleTasks(
 	ctx: IExecuteFunctions,
 	itemIndex: number,
-	operation: string,
-	apiToken: string,
+	operation: TaskOperations,
+	apiConfig: ApiConfig,
 ): Promise<INodeExecutionData> {
 	const normalizeFilterMode = (mode: string): 'AND' | 'OR' => {
 		const normalized = (mode ?? '').toString().trim().toLowerCase();
@@ -86,7 +97,10 @@ async function handleTasks(
 			includeBody = true;
 			break;
 		default:
-			throw new Error(`Unsupported operation for Tasks: ${operation}`);
+			throw new NodeOperationError(ctx.getNode(), `Unsupported operation: ${operation}`, {
+				itemIndex,
+				description: 'Check the selected operation',
+			});
 	}
 
 	let body;
@@ -133,9 +147,7 @@ async function handleTasks(
 						if (noValueOperators.has(rule.operator)) {
 							return { field: rule.field, operator: rule.operator };
 						}
-						return rule.value.length > 0
-							? rule
-							: { field: rule.field, operator: rule.operator };
+						return rule.value.length > 0 ? rule : { field: rule.field, operator: rule.operator };
 					});
 				if (filterRules.length) {
 					formBody.filter = {
@@ -177,7 +189,10 @@ async function handleTasks(
 				body = { version: taskVersion };
 			}
 		} else if (operation === 'bulkCompleteTasks' || operation === 'bulkDeleteTasks') {
-			const ids = taskIds.split(',').map((id: string) => id.trim()).filter((id: string) => id);
+			const ids = taskIds
+				.split(',')
+				.map((id: string) => id.trim())
+				.filter((id: string) => id);
 			if (ids.length > 0) {
 				body = { task_ids: ids };
 			}
@@ -187,13 +202,17 @@ async function handleTasks(
 	const options = buildRequestOptions({
 		method,
 		endpoint,
-		apiToken,
+		apiConfig,
 		qs,
 		body,
 	});
 
-	const response = await ctx.helpers.request(options);
-	return { json: response };
+	try {
+		const response = await ctx.helpers.request(options);
+		return { json: response };
+	} catch (error) {
+		throw new NodeApiError(ctx.getNode(), error as unknown as JsonObject, { itemIndex });
+	}
 }
 
 export { handleTasks };

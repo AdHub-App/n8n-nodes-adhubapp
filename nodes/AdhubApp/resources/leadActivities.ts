@@ -1,12 +1,21 @@
-import type { IExecuteFunctions, INodeExecutionData } from 'n8n-workflow';
+import type { IExecuteFunctions, INodeExecutionData, JsonObject } from 'n8n-workflow';
+import { NodeApiError, NodeOperationError } from 'n8n-workflow';
 
-import { buildRequestOptions, parseJson, JsonRecord } from '../helpers';
+import { type ApiConfig, buildRequestOptions, parseJson, JsonRecord } from '../helpers';
+
+type LeadActivityOperations =
+	| 'listLeadActivityTypes'
+	| 'listLeadActivities'
+	| 'createLeadActivity'
+	| 'getLeadActivity'
+	| 'updateLeadActivity'
+	| 'deleteLeadActivity';
 
 async function handleLeadActivities(
 	ctx: IExecuteFunctions,
 	itemIndex: number,
-	operation: string,
-	apiToken: string,
+	operation: LeadActivityOperations,
+	apiConfig: ApiConfig,
 ): Promise<INodeExecutionData> {
 	const leadId = ctx.getNodeParameter('leadId', itemIndex, '') as string;
 	const activityId = ctx.getNodeParameter('activityId', itemIndex, '') as string;
@@ -51,7 +60,10 @@ async function handleLeadActivities(
 			endpoint = `/leads/${leadId}/activities/${activityId}`;
 			break;
 		default:
-			throw new Error(`Unsupported operation for Lead Activities ${operation}`);
+			throw new NodeOperationError(ctx.getNode(), `Unsupported operation: ${operation}`, {
+				itemIndex,
+				description: 'Check the selected operation',
+			});
 	}
 
 	let body;
@@ -70,13 +82,17 @@ async function handleLeadActivities(
 	const options = buildRequestOptions({
 		method,
 		endpoint,
-		apiToken,
+		apiConfig,
 		qs,
 		body,
 	});
 
-	const response = await ctx.helpers.request(options);
-	return { json: response };
+	try {
+		const response = await ctx.helpers.request(options);
+		return { json: response };
+	} catch (error) {
+		throw new NodeApiError(ctx.getNode(), error as unknown as JsonObject, { itemIndex });
+	}
 }
 
 export { handleLeadActivities };

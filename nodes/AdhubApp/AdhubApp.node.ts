@@ -6,9 +6,9 @@ import type {
 	INodeType,
 	INodeTypeDescription,
 } from 'n8n-workflow';
-import { NodeOperationError } from 'n8n-workflow';
+import { NodeConnectionTypes, NodeOperationError } from 'n8n-workflow';
 
-import { buildRequestOptions, JsonRecord } from './helpers';
+import { type ApiConfig, buildRequestOptions, JsonRecord } from './helpers';
 import { handleLeadSources } from './resources/leadSources';
 import { handleLeadStatuses } from './resources/leadStatuses';
 import { handleLeads } from './resources/leads';
@@ -26,16 +26,29 @@ type QueryField = {
 	options?: Array<{ value?: string; label?: string }>;
 };
 
+type LeadSourceOperation = Parameters<typeof handleLeadSources>[2];
+type LeadStatusOperation = Parameters<typeof handleLeadStatuses>[2];
+type LeadTagOperation = Parameters<typeof handleLeadTags>[2];
+type LeadOperation = Parameters<typeof handleLeads>[2];
+type LeadActivityOperation = Parameters<typeof handleLeadActivities>[2];
+type LeadNoteOperation = Parameters<typeof handleLeadNotes>[2];
+type LeadCustomFieldOperation = Parameters<typeof handleLeadCustomFields>[2];
+type TaskOperation = Parameters<typeof handleTasks>[2];
+
 async function fetchQueryFields(
 	ctx: ILoadOptionsFunctions,
 	context: 'lead.list' | 'task.list',
 ): Promise<QueryField[]> {
 	const credentials = await ctx.getCredentials('adhubAppApi');
-	const apiToken = credentials.apiToken as string;
+	const apiConfig: ApiConfig = {
+		apiToken: credentials.apiToken as string,
+		serverUrl: credentials.serverUrl as string,
+		ignoreSslIssues: credentials.ignoreSslIssues as boolean,
+	};
 	const options = buildRequestOptions({
 		method: 'GET',
 		endpoint: '/query-builder/fields',
-		apiToken,
+		apiConfig,
 		qs: { context } as JsonRecord,
 	});
 	const response = (await ctx.helpers.request(options)) as unknown;
@@ -68,15 +81,16 @@ export class AdhubApp implements INodeType {
 	description: INodeTypeDescription = {
 		displayName: 'Adhub App',
 		name: 'adhubApp',
-		group: ['transform'],
+		group: ['output'],
 		version: 1,
+		subtitle: 'API v1',
 		description: 'Manage Adhub leads, activities, sources, statuses, tags, and custom fields',
 		defaults: {
 			name: 'Adhub App',
 		},
 		icon: 'file:adhubapp.svg',
-		inputs: ['main'],
-		outputs: ['main'],
+		inputs: [NodeConnectionTypes.Main],
+		outputs: [NodeConnectionTypes.Main],
 		usableAsTool: true,
 		credentials: [
 			{
@@ -177,14 +191,26 @@ export class AdhubApp implements INodeType {
 					{ name: 'Bulk Create', value: 'bulkCreateLeads', action: 'Leads bulk create' },
 					{ name: 'Bulk Delete', value: 'bulkDeleteLeads', action: 'Leads bulk delete' },
 					{ name: 'Bulk Sync Tags', value: 'bulkSyncLeadTags', action: 'Leads bulk sync tags' },
-					{ name: 'Bulk Update Custom Fields', value: 'bulkUpdateLeadCustomFields', action: 'Leads bulk update custom fields' },
-					{ name: 'Bulk Update Fields', value: 'bulkUpdateLeadFields', action: 'Leads bulk update fields' },
+					{
+						name: 'Bulk Update Custom Fields',
+						value: 'bulkUpdateLeadCustomFields',
+						action: 'Leads bulk update custom fields',
+					},
+					{
+						name: 'Bulk Update Fields',
+						value: 'bulkUpdateLeadFields',
+						action: 'Leads bulk update fields',
+					},
 					{ name: 'Create', value: 'createLead', action: 'Leads create' },
 					{ name: 'Delete', value: 'deleteLead', action: 'Leads delete' },
 					{ name: 'Entries', value: 'listLeadEntries', action: 'Leads entries' },
 					{ name: 'Get', value: 'getLead', action: 'Leads get' },
 					{ name: 'List', value: 'listLeads', action: 'Leads list' },
-					{ name: 'List Query Fields', value: 'listLeadQueryFields', action: 'Leads list query fields' },
+					{
+						name: 'List Query Fields',
+						value: 'listLeadQueryFields',
+						action: 'Leads list query fields',
+					},
 					{ name: 'Timeline', value: 'getLeadTimeline', action: 'Leads timeline' },
 					{ name: 'Update', value: 'updateLead', action: 'Leads update' },
 				],
@@ -206,7 +232,11 @@ export class AdhubApp implements INodeType {
 					{ name: 'Delete', value: 'deleteLeadActivity', action: 'Lead activities delete' },
 					{ name: 'Get', value: 'getLeadActivity', action: 'Lead activities get' },
 					{ name: 'List', value: 'listLeadActivities', action: 'Lead activities list' },
-					{ name: 'List Types', value: 'listLeadActivityTypes', action: 'Lead activity types list' },
+					{
+						name: 'List Types',
+						value: 'listLeadActivityTypes',
+						action: 'Lead activity types list',
+					},
 					{ name: 'Update', value: 'updateLeadActivity', action: 'Lead activities update' },
 				],
 				default: 'listLeadActivities',
@@ -1486,7 +1516,8 @@ export class AdhubApp implements INodeType {
 				name: 'taskBody',
 				type: 'string',
 				default: '',
-				placeholder: '{"lead_id":"abc123","title":"Follow up","type":"email","due_date":"2026-03-25T09:18:49","due_time":"09:18","notes":"Call notes"}',
+				placeholder:
+					'{"lead_id":"abc123","title":"Follow up","type":"email","due_date":"2026-03-25T09:18:49","due_time":"09:18","notes":"Call notes"}',
 				description: 'Request body as a JSON object',
 				displayOptions: {
 					show: {
@@ -1640,7 +1671,8 @@ export class AdhubApp implements INodeType {
 				name: 'taskListBody',
 				type: 'string',
 				default: '',
-				placeholder: '{"per_page":50,"page":1,"search":"follow","status":"scheduled","sort_by":"due_date","sort_dir":"asc"}',
+				placeholder:
+					'{"per_page":50,"page":1,"search":"follow","status":"scheduled","sort_by":"due_date","sort_dir":"asc"}',
 				description: 'Request body as a JSON object',
 				displayOptions: {
 					show: {
@@ -1834,60 +1866,68 @@ export class AdhubApp implements INodeType {
 			},
 			async getLeadFilterOperators(this: ILoadOptionsFunctions): Promise<INodePropertyOptions[]> {
 				const current = this.getCurrentNodeParameters() as JsonRecord | undefined;
-				const fieldKey = (this.getCurrentNodeParameter('field') ??
-					current?.field ??
-					'') as string;
+				const fieldKey = (this.getCurrentNodeParameter('field') ?? current?.field ?? '') as string;
 				const emptyOption = { name: 'Select', value: '' };
 				if (!fieldKey) return [emptyOption];
 				const fields = await fetchQueryFields(this, 'lead.list');
 				const normalized = fieldKey.toString().trim().toLowerCase();
-				const match = fields.find((field) => field.key === fieldKey) ??
-					fields.find((field) => (field.label ?? '').toString().trim().toLowerCase() === normalized);
+				const match =
+					fields.find((field) => field.key === fieldKey) ??
+					fields.find(
+						(field) => (field.label ?? '').toString().trim().toLowerCase() === normalized,
+					);
 				const operators = (match?.operators ?? []).map((op) => ({ name: op, value: op }));
 				return [emptyOption, ...operators];
 			},
 			async getTaskFilterOperators(this: ILoadOptionsFunctions): Promise<INodePropertyOptions[]> {
 				const current = this.getCurrentNodeParameters() as JsonRecord | undefined;
-				const fieldKey = (this.getCurrentNodeParameter('field') ??
-					current?.field ??
-					'') as string;
+				const fieldKey = (this.getCurrentNodeParameter('field') ?? current?.field ?? '') as string;
 				const emptyOption = { name: 'Select', value: '' };
 				if (!fieldKey) return [emptyOption];
 				const fields = await fetchQueryFields(this, 'task.list');
 				const normalized = fieldKey.toString().trim().toLowerCase();
-				const match = fields.find((field) => field.key === fieldKey) ??
-					fields.find((field) => (field.label ?? '').toString().trim().toLowerCase() === normalized);
+				const match =
+					fields.find((field) => field.key === fieldKey) ??
+					fields.find(
+						(field) => (field.label ?? '').toString().trim().toLowerCase() === normalized,
+					);
 				const operators = (match?.operators ?? []).map((op) => ({ name: op, value: op }));
 				return [emptyOption, ...operators];
 			},
-			async getLeadFilterFieldOptions(this: ILoadOptionsFunctions): Promise<INodePropertyOptions[]> {
+			async getLeadFilterFieldOptions(
+				this: ILoadOptionsFunctions,
+			): Promise<INodePropertyOptions[]> {
 				const current = this.getCurrentNodeParameters() as JsonRecord | undefined;
-				const fieldKey = (this.getCurrentNodeParameter('field') ??
-					current?.field ??
-					'') as string;
+				const fieldKey = (this.getCurrentNodeParameter('field') ?? current?.field ?? '') as string;
 				const emptyOption = { name: 'Select', value: '' };
 				if (!fieldKey) return [emptyOption];
 				const fields = await fetchQueryFields(this, 'lead.list');
 				const normalized = fieldKey.toString().trim().toLowerCase();
-				const match = fields.find((field) => field.key === fieldKey) ??
-					fields.find((field) => (field.label ?? '').toString().trim().toLowerCase() === normalized);
+				const match =
+					fields.find((field) => field.key === fieldKey) ??
+					fields.find(
+						(field) => (field.label ?? '').toString().trim().toLowerCase() === normalized,
+					);
 				const options = (match?.options ?? []).map((opt) => ({
 					name: opt.label ?? opt.value ?? '',
 					value: opt.value ?? '',
 				}));
 				return [emptyOption, ...options];
 			},
-			async getTaskFilterFieldOptions(this: ILoadOptionsFunctions): Promise<INodePropertyOptions[]> {
+			async getTaskFilterFieldOptions(
+				this: ILoadOptionsFunctions,
+			): Promise<INodePropertyOptions[]> {
 				const current = this.getCurrentNodeParameters() as JsonRecord | undefined;
-				const fieldKey = (this.getCurrentNodeParameter('field') ??
-					current?.field ??
-					'') as string;
+				const fieldKey = (this.getCurrentNodeParameter('field') ?? current?.field ?? '') as string;
 				const emptyOption = { name: 'Select', value: '' };
 				if (!fieldKey) return [emptyOption];
 				const fields = await fetchQueryFields(this, 'task.list');
 				const normalized = fieldKey.toString().trim().toLowerCase();
-				const match = fields.find((field) => field.key === fieldKey) ??
-					fields.find((field) => (field.label ?? '').toString().trim().toLowerCase() === normalized);
+				const match =
+					fields.find((field) => field.key === fieldKey) ??
+					fields.find(
+						(field) => (field.label ?? '').toString().trim().toLowerCase() === normalized,
+					);
 				const options = (match?.options ?? []).map((opt) => ({
 					name: opt.label ?? opt.value ?? '',
 					value: opt.value ?? '',
@@ -1906,35 +1946,81 @@ export class AdhubApp implements INodeType {
 			const operation = this.getNodeParameter('operation', itemIndex) as string;
 
 			const credentials = await this.getCredentials('adhubAppApi', itemIndex);
-			const apiToken = credentials.apiToken as string;
+			const apiConfig: ApiConfig = {
+				apiToken: credentials.apiToken as string,
+				serverUrl: credentials.serverUrl as string,
+				ignoreSslIssues: credentials.ignoreSslIssues as boolean,
+			};
 
-			switch (resource) {
-				case 'leadSources':
-					returnData.push(await handleLeadSources(this, itemIndex, operation, apiToken));
-					break;
-				case 'leadStatuses':
-					returnData.push(await handleLeadStatuses(this, itemIndex, operation, apiToken));
-					break;
-				case 'leadTags':
-					returnData.push(await handleLeadTags(this, itemIndex, operation, apiToken));
-					break;
-				case 'leads':
-					returnData.push(await handleLeads(this, itemIndex, operation, apiToken));
-					break;
-				case 'leadActivities':
-					returnData.push(await handleLeadActivities(this, itemIndex, operation, apiToken));
-					break;
-				case 'leadNotes':
-					returnData.push(await handleLeadNotes(this, itemIndex, operation, apiToken));
-					break;
-				case 'leadCustomFields':
-					returnData.push(await handleLeadCustomFields(this, itemIndex, operation, apiToken));
-					break;
-				case 'tasks':
-					returnData.push(await handleTasks(this, itemIndex, operation, apiToken));
-					break;
-				default:
-					throw new NodeOperationError(this.getNode(), `Unsupported resource: ${resource}`);
+			try {
+				switch (resource) {
+					case 'leadSources':
+						returnData.push(
+							await handleLeadSources(this, itemIndex, operation as LeadSourceOperation, apiConfig),
+						);
+						break;
+					case 'leadStatuses':
+						returnData.push(
+							await handleLeadStatuses(
+								this,
+								itemIndex,
+								operation as LeadStatusOperation,
+								apiConfig,
+							),
+						);
+						break;
+					case 'leadTags':
+						returnData.push(
+							await handleLeadTags(this, itemIndex, operation as LeadTagOperation, apiConfig),
+						);
+						break;
+					case 'leads':
+						returnData.push(
+							await handleLeads(this, itemIndex, operation as LeadOperation, apiConfig),
+						);
+						break;
+					case 'leadActivities':
+						returnData.push(
+							await handleLeadActivities(
+								this,
+								itemIndex,
+								operation as LeadActivityOperation,
+								apiConfig,
+							),
+						);
+						break;
+					case 'leadNotes':
+						returnData.push(
+							await handleLeadNotes(this, itemIndex, operation as LeadNoteOperation, apiConfig),
+						);
+						break;
+					case 'leadCustomFields':
+						returnData.push(
+							await handleLeadCustomFields(
+								this,
+								itemIndex,
+								operation as LeadCustomFieldOperation,
+								apiConfig,
+							),
+						);
+						break;
+					case 'tasks':
+						returnData.push(
+							await handleTasks(this, itemIndex, operation as TaskOperation, apiConfig),
+						);
+						break;
+					default:
+						throw new NodeOperationError(this.getNode(), `Unsupported resource: ${resource}`);
+				}
+			} catch (error) {
+				if (this.continueOnFail()) {
+					returnData.push({
+						json: { error: (error as Error).message },
+						pairedItem: { item: itemIndex },
+					});
+				} else {
+					throw error;
+				}
 			}
 		}
 

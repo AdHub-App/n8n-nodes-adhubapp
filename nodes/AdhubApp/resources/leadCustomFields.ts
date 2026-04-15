@@ -1,12 +1,20 @@
-import type { IExecuteFunctions, INodeExecutionData } from 'n8n-workflow';
+import type { IExecuteFunctions, INodeExecutionData, JsonObject } from 'n8n-workflow';
+import { NodeApiError, NodeOperationError } from 'n8n-workflow';
 
-import { buildRequestOptions, parseJson, JsonRecord } from '../helpers';
+import { type ApiConfig, buildRequestOptions, parseJson, JsonRecord } from '../helpers';
+
+type LeadCustomFieldOperations =
+	| 'listLeadCustomFields'
+	| 'createLeadCustomField'
+	| 'getLeadCustomField'
+	| 'updateLeadCustomField'
+	| 'deleteLeadCustomField';
 
 async function handleLeadCustomFields(
 	ctx: IExecuteFunctions,
 	itemIndex: number,
-	operation: string,
-	apiToken: string,
+	operation: LeadCustomFieldOperations,
+	apiConfig: ApiConfig,
 ): Promise<INodeExecutionData> {
 	const customFieldId = ctx.getNodeParameter('customFieldId', itemIndex, '') as string;
 	const bodyRaw = ctx.getNodeParameter('customFieldBody', itemIndex, '') as string;
@@ -51,7 +59,10 @@ async function handleLeadCustomFields(
 			includeBody = true;
 			break;
 		default:
-			throw new Error(`Unsupported operation for Lead Custom Fields ${operation}`);
+			throw new NodeOperationError(ctx.getNode(), `Unsupported operation: ${operation}`, {
+				itemIndex,
+				description: 'Check the selected operation',
+			});
 	}
 
 	let body;
@@ -85,12 +96,16 @@ async function handleLeadCustomFields(
 	const options = buildRequestOptions({
 		method,
 		endpoint,
-		apiToken,
+		apiConfig,
 		body,
 	});
 
-	const response = await ctx.helpers.request(options);
-	return { json: response };
+	try {
+		const response = await ctx.helpers.request(options);
+		return { json: response };
+	} catch (error) {
+		throw new NodeApiError(ctx.getNode(), error as unknown as JsonObject, { itemIndex });
+	}
 }
 
 export { handleLeadCustomFields };

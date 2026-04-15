@@ -1,12 +1,28 @@
-import type { IExecuteFunctions, INodeExecutionData, IDataObject } from 'n8n-workflow';
+import type { IExecuteFunctions, INodeExecutionData, IDataObject, JsonObject } from 'n8n-workflow';
+import { NodeApiError, NodeOperationError } from 'n8n-workflow';
 
-import { buildRequestOptions, parseJson, JsonRecord } from '../helpers';
+import { type ApiConfig, buildRequestOptions, parseJson, JsonRecord } from '../helpers';
+
+type LeadOperations =
+	| 'listLeadQueryFields'
+	| 'listLeads'
+	| 'createLead'
+	| 'getLead'
+	| 'bulkCreateLeads'
+	| 'bulkDeleteLeads'
+	| 'bulkUpdateLeadFields'
+	| 'bulkSyncLeadTags'
+	| 'bulkUpdateLeadCustomFields'
+	| 'updateLead'
+	| 'deleteLead'
+	| 'getLeadTimeline'
+	| 'listLeadEntries';
 
 async function handleLeads(
 	ctx: IExecuteFunctions,
 	itemIndex: number,
-	operation: string,
-	apiToken: string,
+	operation: LeadOperations,
+	apiConfig: ApiConfig,
 ): Promise<INodeExecutionData> {
 	const normalizeFilterMode = (mode: string): 'AND' | 'OR' => {
 		const normalized = (mode ?? '').toString().trim().toLowerCase();
@@ -35,7 +51,11 @@ async function handleLeads(
 	const leadInternalNotes = ctx.getNodeParameter('leadInternalNotes', itemIndex, '') as string;
 	const leadUpdatedAt = ctx.getNodeParameter('leadUpdatedAt', itemIndex, '') as string;
 	const leadIncludeEmpty = ctx.getNodeParameter('leadIncludeEmpty', itemIndex, true) as boolean;
-	const leadAdditionalFieldsRaw = ctx.getNodeParameter('leadAdditionalFields', itemIndex, '') as string;
+	const leadAdditionalFieldsRaw = ctx.getNodeParameter(
+		'leadAdditionalFields',
+		itemIndex,
+		'',
+	) as string;
 	const leadTimelineLimit = ctx.getNodeParameter('leadTimelineLimit', itemIndex, 0) as number;
 	const leadEntriesLimit = ctx.getNodeParameter('leadEntriesLimit', itemIndex, 0) as number;
 	const leadListBodyType = ctx.getNodeParameter('leadListBodyType', itemIndex, 'json') as string;
@@ -54,16 +74,18 @@ async function handleLeads(
 	};
 	const bulkCreateBodyRaw = ctx.getNodeParameter('bulkCreateBody', itemIndex, '') as string;
 	const bulkDeleteBodyRaw = ctx.getNodeParameter('bulkDeleteBody', itemIndex, '') as string;
-	const bulkUpdateFieldsBodyRaw = ctx.getNodeParameter('bulkUpdateFieldsBody', itemIndex, '') as string;
+	const bulkUpdateFieldsBodyRaw = ctx.getNodeParameter(
+		'bulkUpdateFieldsBody',
+		itemIndex,
+		'',
+	) as string;
 	const bulkSyncTagsBodyRaw = ctx.getNodeParameter('bulkSyncTagsBody', itemIndex, '') as string;
 	const bulkUpdateCustomFieldsBodyRaw = ctx.getNodeParameter(
 		'bulkUpdateCustomFieldsBody',
 		itemIndex,
 		'',
 	) as string;
-	const operationsUsingJsonBody = new Set([
-		'listLeads',
-	]);
+	const operationsUsingJsonBody = new Set(['listLeads']);
 
 	let method: 'GET' | 'POST' | 'PUT' | 'DELETE';
 	let endpoint: string;
@@ -135,7 +157,10 @@ async function handleLeads(
 			if (leadEntriesLimit) qs.limit = leadEntriesLimit;
 			break;
 		default:
-			throw new Error(`Unsupported operation for Leads ${operation}`);
+			throw new NodeOperationError(ctx.getNode(), `Unsupported operation: ${operation}`, {
+				itemIndex,
+				description: 'Check the selected operation',
+			});
 	}
 
 	let body;
@@ -227,9 +252,7 @@ async function handleLeads(
 					if (noValueOperators.has(rule.operator)) {
 						return { field: rule.field, operator: rule.operator };
 					}
-					return rule.value.length > 0
-						? rule
-						: { field: rule.field, operator: rule.operator };
+					return rule.value.length > 0 ? rule : { field: rule.field, operator: rule.operator };
 				});
 			if (filterRules.length) {
 				listBody.filter = {
@@ -262,7 +285,7 @@ async function handleLeads(
 	const options = buildRequestOptions({
 		method,
 		endpoint,
-		apiToken,
+		apiConfig,
 		qs,
 		body,
 	});
@@ -298,7 +321,7 @@ async function handleLeads(
 				}
 			}
 		}
-		throw error;
+		throw new NodeApiError(ctx.getNode(), error as unknown as JsonObject, { itemIndex });
 	}
 }
 

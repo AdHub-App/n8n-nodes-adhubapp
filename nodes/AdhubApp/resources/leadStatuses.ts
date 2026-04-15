@@ -1,12 +1,20 @@
-import type { IExecuteFunctions, INodeExecutionData } from 'n8n-workflow';
+import type { IExecuteFunctions, INodeExecutionData, JsonObject } from 'n8n-workflow';
+import { NodeApiError, NodeOperationError } from 'n8n-workflow';
 
-import { buildRequestOptions, parseJson, JsonRecord } from '../helpers';
+import { type ApiConfig, buildRequestOptions, parseJson, JsonRecord } from '../helpers';
+
+type LeadStatusOperations =
+	| 'listLeadStatuses'
+	| 'createLeadStatus'
+	| 'getLeadStatus'
+	| 'updateLeadStatus'
+	| 'deleteLeadStatus';
 
 async function handleLeadStatuses(
 	ctx: IExecuteFunctions,
 	itemIndex: number,
-	operation: string,
-	apiToken: string,
+	operation: LeadStatusOperations,
+	apiConfig: ApiConfig,
 ): Promise<INodeExecutionData> {
 	const statusId = ctx.getNodeParameter('statusId', itemIndex, '') as string;
 	const statusBodyType = ctx.getNodeParameter('statusBodyType', itemIndex, 'form') as string;
@@ -43,7 +51,10 @@ async function handleLeadStatuses(
 			endpoint = `/lead-statuses/${statusId}`;
 			break;
 		default:
-			throw new Error(`Unsupported operation for Lead Statuses ${operation}`);
+			throw new NodeOperationError(ctx.getNode(), `Unsupported operation: ${operation}`, {
+				itemIndex,
+				description: 'Check the selected operation',
+			});
 	}
 
 	let body;
@@ -61,12 +72,16 @@ async function handleLeadStatuses(
 	const options = buildRequestOptions({
 		method,
 		endpoint,
-		apiToken,
+		apiConfig,
 		body,
 	});
 
-	const response = await ctx.helpers.request(options);
-	return { json: response };
+	try {
+		const response = await ctx.helpers.request(options);
+		return { json: response };
+	} catch (error) {
+		throw new NodeApiError(ctx.getNode(), error as unknown as JsonObject, { itemIndex });
+	}
 }
 
 export { handleLeadStatuses };
