@@ -7,7 +7,12 @@ import type {
 } from 'n8n-workflow';
 import { LoggerProxy, NodeConnectionTypes } from 'n8n-workflow';
 
-import { buildPayloadHash, firstNonEmptyString, matchesEventType, type JsonRecord } from './trigger/sharedServices';
+import {
+	buildPayloadHash,
+	firstNonEmptyString,
+	matchesEventType,
+	type JsonRecord,
+} from './trigger/sharedServices';
 
 const PROVIDER = 'adhubapp';
 const EVENT_HEADER_NAME = 'X-AdHub-Event';
@@ -17,13 +22,6 @@ const TIMESTAMP_HEADER_NAME = 'X-AdHub-Timestamp';
 const SIGNATURE_HEADER_NAME = 'X-AdHub-Signature';
 
 export class AdhubAppTrigger implements INodeType {
-	constructor() {
-		LoggerProxy.info('[AdhubAppTrigger] node_type_loaded', {
-			nodeType: this.description.name,
-			credentialType: this.description.credentials?.[0]?.name,
-		});
-	}
-
 	description: INodeTypeDescription = {
 		displayName: 'Adhub App Trigger',
 		name: 'adhubAppTrigger',

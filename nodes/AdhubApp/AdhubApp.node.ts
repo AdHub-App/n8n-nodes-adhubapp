@@ -8,7 +8,12 @@ import type {
 } from 'n8n-workflow';
 import { NodeConnectionTypes, NodeOperationError } from 'n8n-workflow';
 
-import { type ApiConfig, buildRequestOptions, JsonRecord } from './helpers';
+import {
+	type AdhubAppCredentials,
+	type ApiConfig,
+	buildRequestOptions,
+	JsonRecord,
+} from './helpers';
 import { handleLeadSources } from './resources/leadSources';
 import { handleLeadStatuses } from './resources/leadStatuses';
 import { handleLeads } from './resources/leads';
@@ -35,16 +40,20 @@ type LeadNoteOperation = Parameters<typeof handleLeadNotes>[2];
 type LeadCustomFieldOperation = Parameters<typeof handleLeadCustomFields>[2];
 type TaskOperation = Parameters<typeof handleTasks>[2];
 
+function getApiConfig(credentials: AdhubAppCredentials): ApiConfig {
+	return {
+		apiToken: credentials.apiToken,
+		serverUrl: credentials.serverUrl,
+		ignoreSslIssues: credentials.ignoreSslIssues,
+	};
+}
+
 async function fetchQueryFields(
 	ctx: ILoadOptionsFunctions,
 	context: 'lead.list' | 'task.list',
 ): Promise<QueryField[]> {
-	const credentials = await ctx.getCredentials('adhubAppApi');
-	const apiConfig: ApiConfig = {
-		apiToken: credentials.apiToken as string,
-		serverUrl: credentials.serverUrl as string,
-		ignoreSslIssues: credentials.ignoreSslIssues as boolean,
-	};
+	const credentials = await ctx.getCredentials<AdhubAppCredentials>('adhubAppApi');
+	const apiConfig = getApiConfig(credentials);
 	const options = buildRequestOptions({
 		method: 'GET',
 		endpoint: '/query-builder/fields',
@@ -1945,12 +1954,8 @@ export class AdhubApp implements INodeType {
 			const resource = this.getNodeParameter('resource', itemIndex) as string;
 			const operation = this.getNodeParameter('operation', itemIndex) as string;
 
-			const credentials = await this.getCredentials('adhubAppApi', itemIndex);
-			const apiConfig: ApiConfig = {
-				apiToken: credentials.apiToken as string,
-				serverUrl: credentials.serverUrl as string,
-				ignoreSslIssues: credentials.ignoreSslIssues as boolean,
-			};
+			const credentials = await this.getCredentials<AdhubAppCredentials>('adhubAppApi', itemIndex);
+			const apiConfig = getApiConfig(credentials);
 
 			try {
 				switch (resource) {

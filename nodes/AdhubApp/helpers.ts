@@ -1,16 +1,20 @@
 import type { IDataObject, IHttpRequestMethods, IHttpRequestOptions } from 'n8n-workflow';
 
 type JsonRecord = IDataObject;
-type ApiConfig = {
-	apiToken: string;
-	serverUrl?: string;
-	ignoreSslIssues?: boolean;
-};
 
-const DEFAULT_SERVER_URL = 'https://adhub-main-d1fcap.laravel.cloud';
+interface AdhubAppCredentials {
+	apiToken: string;
+	serverUrl: string;
+	ignoreSslIssues: boolean;
+}
+
+type ApiConfig = AdhubAppCredentials;
 
 function normalizeServerUrl(serverUrl: string | undefined): string {
-	const value = serverUrl?.trim() || DEFAULT_SERVER_URL;
+	const value = serverUrl?.trim() || '';
+	if (!value) {
+		throw new Error('Server URL is required. Please configure your AdHub credentials.');
+	}
 	return value.replace(/\/+$/, '');
 }
 
@@ -57,4 +61,11 @@ function buildRequestOptions(config: {
 	return options;
 }
 
-export { DEFAULT_SERVER_URL, type ApiConfig, JsonRecord, buildRequestOptions, normalizeServerUrl, parseJson };
+export {
+	type AdhubAppCredentials,
+	type ApiConfig,
+	JsonRecord,
+	buildRequestOptions,
+	normalizeServerUrl,
+	parseJson,
+};
