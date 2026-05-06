@@ -13,7 +13,7 @@
 	},
 	"repository": {
 		"type": "git",
-		"url": "https://github.com/AdHub-App/n8n-nodes-adhubapp.git"
+		"url": "git+https://github.com/AdHub-App/n8n-nodes-adhubapp.git"
 	},
 	"scripts": {
 		"preinstall": "node scripts/verify-install.js",
