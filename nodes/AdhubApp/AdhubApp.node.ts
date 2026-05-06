@@ -31,6 +31,165 @@ type QueryField = {
 	options?: Array<{ value?: string; label?: string }>;
 };
 
+const VALUE_LESS_FILTER_OPERATORS = [
+	'Is Empty',
+	'Is Not Empty',
+	'Today',
+	'Yesterday',
+	'This Week',
+	'Last Week',
+	'This Month',
+	'Last Month',
+	'This Year',
+];
+
+function readCurrentStringParam(
+	ctx: ILoadOptionsFunctions,
+	parameterName: string,
+): string {
+	const extractString = (value: unknown): string => {
+		if (typeof value === 'string') {
+			return value.trim();
+		}
+		if (!value || typeof value !== 'object') {
+			return '';
+		}
+		if (Array.isArray(value)) {
+			for (const entry of value) {
+				const match = extractString(entry);
+				if (match) return match;
+			}
+			return '';
+		}
+
+		const record = value as Record<string, unknown>;
+		const directCandidates = [record.value, record.name, record.label];
+		for (const candidate of directCandidates) {
+			const match = extractString(candidate);
+			if (match) return match;
+		}
+		return '';
+	};
+
+	const candidates = [
+		parameterName,
+		`values.${parameterName}`,
+		`filter.${parameterName}`,
+		`filter.values.${parameterName}`,
+		`leadListFilterRules.values.${parameterName}`,
+		`taskListFilterRules.values.${parameterName}`,
+	];
+
+	for (const candidate of candidates) {
+		try {
+			const value = ctx.getCurrentNodeParameter(candidate);
+			const match = extractString(value);
+			if (match) return match;
+		} catch {
+			// Ignore lookup misses and continue with the next candidate.
+		}
+	}
+
+	const searchNested = (value: unknown): string => {
+		const direct = extractString(value);
+		if (direct) return direct;
+		if (!value || typeof value !== 'object') {
+			return '';
+		}
+		if (Array.isArray(value)) {
+			for (const entry of value) {
+				const match = searchNested(entry);
+				if (match) return match;
+			}
+			return '';
+		}
+
+		const record = value as Record<string, unknown>;
+		const parameterValue = record[parameterName];
+		const parameterMatch = extractString(parameterValue);
+		if (parameterMatch) {
+			return parameterMatch;
+		}
+		for (const entry of Object.values(record)) {
+			const match = searchNested(entry);
+			if (match) return match;
+		}
+		return '';
+	};
+
+	return searchNested(ctx.getCurrentNodeParameters());
+}
+
+function findQueryField(fields: QueryField[], fieldKey: string): QueryField | undefined {
+	const normalized = fieldKey.toString().trim().toLowerCase();
+	return (
+		fields.find((field) => field.key === fieldKey) ??
+		fields.find((field) => (field.key ?? '').toString().trim().toLowerCase() === normalized) ??
+		fields.find((field) => (field.label ?? '').toString().trim().toLowerCase() === normalized)
+	);
+}
+
+function mapOptions(values: string[]): INodePropertyOptions[] {
+	return values.map((value) => ({ name: value, value }));
+}
+
+function mapFieldValueOptions(field?: QueryField): INodePropertyOptions[] {
+	const options = Array.isArray(field?.options) ? field.options : [];
+	return options
+		.filter((option) => (option.value ?? '').toString().trim().length > 0)
+		.map((option) => ({
+			name: option.label ?? option.value ?? '',
+			value: option.value ?? '',
+		}));
+}
+
+function mapScopedOperatorOptions(fields: QueryField[]): INodePropertyOptions[] {
+	const operators = new Set<string>();
+	for (const field of fields) {
+		for (const operator of field.operators ?? []) {
+			const operatorName = operator.toString().trim();
+			if (!operatorName) continue;
+			operators.add(operatorName);
+		}
+	}
+	return Array.from(operators).map((operator) => ({ name: operator, value: operator }));
+}
+
+function mapScopedFieldValueOptions(fields: QueryField[]): INodePropertyOptions[] {
+	const options = new Map<string, INodePropertyOptions>();
+
+	for (const field of fields) {
+		for (const option of field.options ?? []) {
+			const value = (option.value ?? '').toString().trim();
+			if (!value) continue;
+			options.set(value, {
+				name: option.label ?? option.value ?? '',
+				value,
+			});
+		}
+	}
+
+	return Array.from(options.values());
+}
+
+function readFixedCollectionRuleParam(
+	ctx: ILoadOptionsFunctions,
+	collectionName: string,
+	paramName: string,
+): string {
+	const nodeParams = ctx.getCurrentNodeParameters() as Record<string, unknown>;
+	const collection = nodeParams[collectionName] as { values?: Array<Record<string, unknown>> } | undefined;
+	const values = Array.isArray(collection?.values) ? collection.values : [];
+	for (let i = values.length - 1; i >= 0; i--) {
+		const rawValue = values[i]?.[paramName];
+		if (typeof rawValue === 'string' && rawValue.trim().length > 0) {
+			return rawValue.trim();
+		}
+	}
+	return '';
+}
+
+
 type LeadSourceOperation = Parameters<typeof handleLeadSources>[2];
 type LeadStatusOperation = Parameters<typeof handleLeadStatuses>[2];
 type LeadTagOperation = Parameters<typeof handleLeadTags>[2];
@@ -581,7 +740,7 @@ export class AdhubApp implements INodeType {
 				type: 'string',
 				default: '',
 				placeholder:
-					'{"per_page":50,"page":2,"search":"john","filter":{"mode":"and","rules":[{"field":"lead.status","operator":"Equals To","value":"New"}]}}',
+					'{"per_page":50,"cursor":"opaque-cursor","page":2,"search":"john","sort_by":"created_at","sort_dir":"desc","filter":{"mode":"and","rules":[{"field":"lead.status","operator":"Equals To","value":"New"}]}}',
 				description: 'Request body as a JSON object',
 				displayOptions: {
 					show: {
@@ -608,6 +767,20 @@ export class AdhubApp implements INodeType {
 					},
 				},
 				description: 'Number of leads per page. Set 0 to omit.',
+			},
+			{
+				displayName: 'Cursor',
+				name: 'leadListCursor',
+				type: 'string',
+				default: '',
+				displayOptions: {
+					show: {
+						resource: ['leads'],
+						operation: ['listLeads'],
+						leadListBodyType: ['form'],
+					},
+				},
+				description: 'Cursor for fetching the next page. Leave blank to omit.',
 			},
 			{
 				displayName: 'Page',
@@ -639,6 +812,39 @@ export class AdhubApp implements INodeType {
 					},
 				},
 				description: 'Search term to filter leads',
+			},
+			{
+				displayName: 'Sort By',
+				name: 'leadListSortBy',
+				type: 'string',
+				default: '',
+				displayOptions: {
+					show: {
+						resource: ['leads'],
+						operation: ['listLeads'],
+						leadListBodyType: ['form'],
+					},
+				},
+				description: 'Field to sort by. Leave blank to omit.',
+			},
+			{
+				displayName: 'Sort Direction',
+				name: 'leadListSortDir',
+				type: 'options',
+				options: [
+					{ name: 'Ascending', value: 'asc' },
+					{ name: 'Descending', value: 'desc' },
+					{ name: 'Select', value: '' },
+				],
+				default: '',
+				displayOptions: {
+					show: {
+						resource: ['leads'],
+						operation: ['listLeads'],
+						leadListBodyType: ['form'],
+					},
+				},
+				description: 'Sort direction. Leave blank to omit.',
 			},
 			{
 				displayName: 'Filter Mode',
@@ -690,34 +896,27 @@ export class AdhubApp implements INodeType {
 								default: '',
 								typeOptions: {
 									loadOptionsMethod: 'getLeadFilterOperators',
-									loadOptionsDependsOn: ['field'],
+									loadOptionsDependsOn: [
+										'field',
+										'values.field',
+										'leadListFilterRules',
+										'leadListFilterRules.values.field',
+									],
 								},
 								description:
 									'Choose from the list, or specify an ID using an <a href="https://docs.n8n.io/code/expressions/">expression</a>',
 							},
 							{
-								displayName: 'Value (Date)',
-								name: 'valueDate',
-								type: 'dateTime',
-								default: '',
-							},
-							{
-								displayName: 'Value (Select) Name or ID',
-								name: 'valueSelect',
-								type: 'options',
-								default: '',
-								typeOptions: {
-									loadOptionsMethod: 'getLeadFilterFieldOptions',
-									loadOptionsDependsOn: ['field'],
-								},
-								description:
-									'Choose from the list, or specify an ID using an <a href="https://docs.n8n.io/code/expressions/">expression</a>',
-							},
-							{
-								displayName: 'Value (Text)',
-								name: 'valueText',
+								displayName: 'Value',
+								name: 'value',
 								type: 'string',
 								default: '',
+								displayOptions: {
+									hide: {
+										operator: VALUE_LESS_FILTER_OPERATORS,
+									},
+								},
+								description: 'Filter value for the selected field',
 							},
 						],
 					},
@@ -1099,7 +1298,7 @@ export class AdhubApp implements INodeType {
 						displayName: 'Option',
 						values: [
 							{
-								displayName: 'Value',
+								displayName: 'Value Name or ID',
 								name: 'value',
 								type: 'string',
 								default: '',
@@ -1391,11 +1590,11 @@ export class AdhubApp implements INodeType {
 				description: 'ISO 8601 timestamp with timezone',
 			},
 			{
-				displayName: 'Include Empty Fields',
+				displayName: 'Include Empty Fields (Compatibility)',
 				name: 'leadIncludeEmpty',
 				type: 'boolean',
-				default: true,
-				description: 'Whether to send empty strings for blank fields instead of omitting them',
+				default: false,
+				description: 'Whether to send empty strings for blank fields instead of omitting them for compatibility',
 				displayOptions: {
 					show: {
 						resource: ['leads'],
@@ -1405,12 +1604,12 @@ export class AdhubApp implements INodeType {
 				},
 			},
 			{
-				displayName: 'Additional Fields (JSON)',
+				displayName: 'Additional / Undocumented Fields (JSON)',
 				name: 'leadAdditionalFields',
 				type: 'string',
 				default: '',
 				placeholder: '{"company":"Acme","job_title":"Owner"}',
-				description: 'Optional extra fields as a JSON object',
+				description: 'Compatibility fields not covered by the OpenAPI spec, sent as a JSON object',
 				displayOptions: {
 					show: {
 						resource: ['leads'],
@@ -1526,7 +1725,7 @@ export class AdhubApp implements INodeType {
 				type: 'string',
 				default: '',
 				placeholder:
-					'{"lead_id":"abc123","title":"Follow up","type":"email","due_date":"2026-03-25T09:18:49","due_time":"09:18","notes":"Call notes"}',
+					'{"lead_id":"abc123","title":"Follow up","type":"email","due_date":"2026-03-25","due_time":"09:18","notes":"Call notes"}',
 				description: 'Request body as a JSON object',
 				displayOptions: {
 					show: {
@@ -1575,6 +1774,10 @@ export class AdhubApp implements INodeType {
 					{ name: 'Email', value: 'email' },
 					{ name: 'Meeting', value: 'meeting' },
 					{ name: 'Other', value: 'other' },
+					{ name: 'Share', value: 'share' },
+					{ name: 'SMS', value: 'sms' },
+					{ name: 'To Do', value: 'to_do' },
+					{ name: 'WhatsApp', value: 'whatsapp' },
 				],
 				default: 'other',
 				required: true,
@@ -1592,7 +1795,7 @@ export class AdhubApp implements INodeType {
 				name: 'taskDueDate',
 				type: 'string',
 				default: '',
-				placeholder: '2026-03-25T09:18:49',
+				placeholder: '2026-03-25',
 				displayOptions: {
 					show: {
 						resource: ['tasks'],
@@ -1600,7 +1803,7 @@ export class AdhubApp implements INodeType {
 						taskBodyType: ['form'],
 					},
 				},
-				description: 'Due date in ISO 8601 format',
+				description: 'Due date in YYYY-MM-DD format',
 			},
 			{
 				displayName: 'Due Time',
@@ -1632,18 +1835,18 @@ export class AdhubApp implements INodeType {
 				description: 'Task notes',
 			},
 			{
-				displayName: 'Version',
+				displayName: 'Updated At',
 				name: 'taskVersion',
-				type: 'number',
-				default: 0,
+				type: 'string',
+				default: '',
+				placeholder: '2026-05-03T09:30:00+05:00',
 				displayOptions: {
 					show: {
 						resource: ['tasks'],
 						operation: ['updateTask', 'completeTask'],
-						taskBodyType: ['form'],
 					},
 				},
-				description: 'Task version for optimistic locking',
+				description: 'Optional optimistic lock timestamp. Legacy numeric values are ignored.',
 			},
 			{
 				displayName: 'Task IDs',
@@ -1681,7 +1884,7 @@ export class AdhubApp implements INodeType {
 				type: 'string',
 				default: '',
 				placeholder:
-					'{"per_page":50,"page":1,"search":"follow","status":"scheduled","sort_by":"due_date","sort_dir":"asc"}',
+					'{"per_page":50,"cursor":"opaque-cursor","page":1,"search":"follow","status":"scheduled","sort_by":"due_date","sort_dir":"asc"}',
 				description: 'Request body as a JSON object',
 				displayOptions: {
 					show: {
@@ -1708,6 +1911,20 @@ export class AdhubApp implements INodeType {
 					},
 				},
 				description: 'Number of tasks per page. Set 0 to omit.',
+			},
+			{
+				displayName: 'Cursor',
+				name: 'taskListCursor',
+				type: 'string',
+				default: '',
+				displayOptions: {
+					show: {
+						resource: ['tasks'],
+						operation: ['listTasks'],
+						taskListBodyType: ['form'],
+					},
+				},
+				description: 'Cursor for fetching the next page. Leave blank to omit.',
 			},
 			{
 				displayName: 'Page',
@@ -1739,6 +1956,39 @@ export class AdhubApp implements INodeType {
 					},
 				},
 				description: 'Search term',
+			},
+			{
+				displayName: 'Sort By',
+				name: 'taskListSortBy',
+				type: 'string',
+				default: '',
+				displayOptions: {
+					show: {
+						resource: ['tasks'],
+						operation: ['listTasks'],
+						taskListBodyType: ['form'],
+					},
+				},
+				description: 'Field to sort by. Leave blank to omit.',
+			},
+			{
+				displayName: 'Sort Direction',
+				name: 'taskListSortDir',
+				type: 'options',
+				options: [
+					{ name: 'Ascending', value: 'asc' },
+					{ name: 'Descending', value: 'desc' },
+					{ name: 'Select', value: '' },
+				],
+				default: '',
+				displayOptions: {
+					show: {
+						resource: ['tasks'],
+						operation: ['listTasks'],
+						taskListBodyType: ['form'],
+					},
+				},
+				description: 'Sort direction. Leave blank to omit.',
 			},
 			{
 				displayName: 'Status',
@@ -1807,34 +2057,27 @@ export class AdhubApp implements INodeType {
 								default: '',
 								typeOptions: {
 									loadOptionsMethod: 'getTaskFilterOperators',
-									loadOptionsDependsOn: ['field'],
+									loadOptionsDependsOn: [
+										'field',
+										'values.field',
+										'taskListFilterRules',
+										'taskListFilterRules.values.field',
+									],
 								},
 								description:
 									'Choose from the list, or specify an ID using an <a href="https://docs.n8n.io/code/expressions/">expression</a>',
 							},
 							{
-								displayName: 'Value (Date)',
-								name: 'valueDate',
-								type: 'dateTime',
-								default: '',
-							},
-							{
-								displayName: 'Value (Select) Name or ID',
-								name: 'valueSelect',
-								type: 'options',
-								default: '',
-								typeOptions: {
-									loadOptionsMethod: 'getTaskFilterFieldOptions',
-									loadOptionsDependsOn: ['field'],
-								},
-								description:
-									'Choose from the list, or specify an ID using an <a href="https://docs.n8n.io/code/expressions/">expression</a>',
-							},
-							{
-								displayName: 'Value (Text)',
-								name: 'valueText',
+								displayName: 'Value',
+								name: 'value',
 								type: 'string',
 								default: '',
+								displayOptions: {
+									hide: {
+										operator: VALUE_LESS_FILTER_OPERATORS,
+									},
+								},
+								description: 'Filter value for the selected field',
 							},
 						],
 					},
@@ -1874,74 +2117,94 @@ export class AdhubApp implements INodeType {
 					}));
 			},
 			async getLeadFilterOperators(this: ILoadOptionsFunctions): Promise<INodePropertyOptions[]> {
-				const current = this.getCurrentNodeParameters() as JsonRecord | undefined;
-				const fieldKey = (this.getCurrentNodeParameter('field') ?? current?.field ?? '') as string;
 				const emptyOption = { name: 'Select', value: '' };
-				if (!fieldKey) return [emptyOption];
 				const fields = await fetchQueryFields(this, 'lead.list');
-				const normalized = fieldKey.toString().trim().toLowerCase();
-				const match =
-					fields.find((field) => field.key === fieldKey) ??
-					fields.find(
-						(field) => (field.label ?? '').toString().trim().toLowerCase() === normalized,
-					);
-				const operators = (match?.operators ?? []).map((op) => ({ name: op, value: op }));
+				const candidateKeys = [
+					readFixedCollectionRuleParam(this, 'leadListFilterRules', 'field'),
+					readCurrentStringParam(this, 'field'),
+				].filter((key) => key.length > 0);
+				const match = candidateKeys
+					.map((key) => findQueryField(fields, key))
+					.find((field): field is QueryField => field !== undefined);
+				if (!match) {
+					return [emptyOption, ...mapScopedOperatorOptions(fields)];
+				}
+				const operators = mapOptions(match?.operators ?? []);
 				return [emptyOption, ...operators];
 			},
 			async getTaskFilterOperators(this: ILoadOptionsFunctions): Promise<INodePropertyOptions[]> {
-				const current = this.getCurrentNodeParameters() as JsonRecord | undefined;
-				const fieldKey = (this.getCurrentNodeParameter('field') ?? current?.field ?? '') as string;
 				const emptyOption = { name: 'Select', value: '' };
-				if (!fieldKey) return [emptyOption];
 				const fields = await fetchQueryFields(this, 'task.list');
-				const normalized = fieldKey.toString().trim().toLowerCase();
-				const match =
-					fields.find((field) => field.key === fieldKey) ??
-					fields.find(
-						(field) => (field.label ?? '').toString().trim().toLowerCase() === normalized,
-					);
-				const operators = (match?.operators ?? []).map((op) => ({ name: op, value: op }));
+				const candidateKeys = [
+					readFixedCollectionRuleParam(this, 'taskListFilterRules', 'field'),
+					readCurrentStringParam(this, 'field'),
+				].filter((key) => key.length > 0);
+				const match = candidateKeys
+					.map((key) => findQueryField(fields, key))
+					.find((field): field is QueryField => field !== undefined);
+				if (!match) {
+					return [emptyOption, ...mapScopedOperatorOptions(fields)];
+				}
+				const operators = mapOptions(match?.operators ?? []);
 				return [emptyOption, ...operators];
 			},
 			async getLeadFilterFieldOptions(
 				this: ILoadOptionsFunctions,
 			): Promise<INodePropertyOptions[]> {
-				const current = this.getCurrentNodeParameters() as JsonRecord | undefined;
-				const fieldKey = (this.getCurrentNodeParameter('field') ?? current?.field ?? '') as string;
+				const fieldKey = readCurrentStringParam(this, 'field');
 				const emptyOption = { name: 'Select', value: '' };
 				if (!fieldKey) return [emptyOption];
 				const fields = await fetchQueryFields(this, 'lead.list');
-				const normalized = fieldKey.toString().trim().toLowerCase();
-				const match =
-					fields.find((field) => field.key === fieldKey) ??
-					fields.find(
-						(field) => (field.label ?? '').toString().trim().toLowerCase() === normalized,
-					);
+				const match = findQueryField(fields, fieldKey);
 				const options = (match?.options ?? []).map((opt) => ({
 					name: opt.label ?? opt.value ?? '',
 					value: opt.value ?? '',
 				}));
 				return [emptyOption, ...options];
 			},
+			async getLeadFilterValues(this: ILoadOptionsFunctions): Promise<INodePropertyOptions[]> {
+				const emptyOption = { name: 'Select', value: '' };
+				const fields = await fetchQueryFields(this, 'lead.list');
+				const candidateKeys = [
+					readFixedCollectionRuleParam(this, 'leadListFilterRules', 'field'),
+					readCurrentStringParam(this, 'field'),
+				].filter((key) => key.length > 0);
+				const match = candidateKeys
+					.map((key) => findQueryField(fields, key))
+					.find((field): field is QueryField => field !== undefined);
+				if (!match) {
+					return [emptyOption, ...mapScopedFieldValueOptions(fields)];
+				}
+				return [emptyOption, ...mapFieldValueOptions(match)];
+			},
 			async getTaskFilterFieldOptions(
 				this: ILoadOptionsFunctions,
 			): Promise<INodePropertyOptions[]> {
-				const current = this.getCurrentNodeParameters() as JsonRecord | undefined;
-				const fieldKey = (this.getCurrentNodeParameter('field') ?? current?.field ?? '') as string;
+				const fieldKey = readCurrentStringParam(this, 'field');
 				const emptyOption = { name: 'Select', value: '' };
 				if (!fieldKey) return [emptyOption];
 				const fields = await fetchQueryFields(this, 'task.list');
-				const normalized = fieldKey.toString().trim().toLowerCase();
-				const match =
-					fields.find((field) => field.key === fieldKey) ??
-					fields.find(
-						(field) => (field.label ?? '').toString().trim().toLowerCase() === normalized,
-					);
+				const match = findQueryField(fields, fieldKey);
 				const options = (match?.options ?? []).map((opt) => ({
 					name: opt.label ?? opt.value ?? '',
 					value: opt.value ?? '',
 				}));
 				return [emptyOption, ...options];
+			},
+			async getTaskFilterValues(this: ILoadOptionsFunctions): Promise<INodePropertyOptions[]> {
+				const emptyOption = { name: 'Select', value: '' };
+				const fields = await fetchQueryFields(this, 'task.list');
+				const candidateKeys = [
+					readFixedCollectionRuleParam(this, 'taskListFilterRules', 'field'),
+					readCurrentStringParam(this, 'field'),
+				].filter((key) => key.length > 0);
+				const match = candidateKeys
+					.map((key) => findQueryField(fields, key))
+					.find((field): field is QueryField => field !== undefined);
+				if (!match) {
+					return [emptyOption, ...mapScopedFieldValueOptions(fields)];
+				}
+				return [emptyOption, ...mapFieldValueOptions(match)];
 			},
 		},
 	};

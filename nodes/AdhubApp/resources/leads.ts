@@ -18,16 +18,95 @@ type LeadOperations =
 	| 'getLeadTimeline'
 	| 'listLeadEntries';
 
+type QueryFieldDefinition = {
+	key?: string;
+	type?: string;
+	options?: Array<{ value?: string; label?: string }>;
+};
+
+async function fetchQueryFields(
+	ctx: IExecuteFunctions,
+	apiConfig: ApiConfig,
+	context: 'lead.list' | 'task.list',
+): Promise<QueryFieldDefinition[]> {
+	const options = buildRequestOptions({
+		method: 'GET',
+		endpoint: '/query-builder/fields',
+		apiConfig,
+		qs: { context },
+	});
+	const response = (await ctx.helpers.request(options)) as unknown;
+	if (Array.isArray(response)) return response as QueryFieldDefinition[];
+	if (response && typeof response === 'object') {
+		const payload = response as JsonRecord;
+		const direct = payload.data;
+		if (Array.isArray(direct)) return direct as QueryFieldDefinition[];
+	}
+	return [];
+}
+
+function resolveRuleValue(
+	rule: {
+		value?: string;
+		operator?: string;
+		valueSelect?: string;
+		valueDate?: string;
+		valueText?: string;
+	},
+	field?: QueryFieldDefinition,
+): string {
+	const normalizedType = (field?.type ?? '').toString().trim().toLowerCase();
+	const optionList = Array.isArray(field?.options) ? field.options : [];
+	const hasSelectOptions = optionList.length > 0;
+	const normalizedOperator = (rule?.operator ?? '').toString().trim().toLowerCase();
+	const usesTextForDateInput =
+		normalizedOperator === 'between' ||
+		normalizedOperator === 'x days before' ||
+		normalizedOperator === 'x days after';
+	const directValue = (rule?.value ?? '').toString().trim();
+	const selectValue = (rule?.valueSelect ?? '').toString().trim();
+	const dateValue = (rule?.valueDate ?? '').toString().trim();
+	const textValue = (rule?.valueText ?? '').toString().trim();
+
+	if (directValue) {
+		return directValue;
+	}
+
+	if (hasSelectOptions) {
+		return selectValue || textValue || dateValue;
+	}
+	if (normalizedType.includes('date') || normalizedType.includes('time')) {
+		if (usesTextForDateInput) {
+			return textValue || dateValue || selectValue;
+		}
+		return dateValue || textValue || selectValue;
+	}
+	return textValue || selectValue || dateValue;
+}
+
 async function handleLeads(
 	ctx: IExecuteFunctions,
 	itemIndex: number,
 	operation: LeadOperations,
 	apiConfig: ApiConfig,
 ): Promise<INodeExecutionData> {
-	const normalizeFilterMode = (mode: string): 'AND' | 'OR' => {
+	const normalizeFilterMode = (mode: string): 'and' | 'or' => {
 		const normalized = (mode ?? '').toString().trim().toLowerCase();
-		return normalized === 'or' ? 'OR' : 'AND';
+		return normalized === 'or' ? 'or' : 'and';
 	};
+	const normalizeOperator = (operator: string): string =>
+		(operator ?? '').toString().trim().toLowerCase();
+	const noValueOperators = new Set([
+		'is empty',
+		'is not empty',
+		'today',
+		'yesterday',
+		'this week',
+		'last week',
+		'this month',
+		'last month',
+		'this year',
+	]);
 
 	const leadId = ctx.getNodeParameter('leadId', itemIndex, '') as string;
 	const queryContext = ctx.getNodeParameter('queryContext', itemIndex, '') as string;
@@ -50,7 +129,7 @@ async function handleLeads(
 	const leadTimeline = ctx.getNodeParameter('leadTimeline', itemIndex, '') as string;
 	const leadInternalNotes = ctx.getNodeParameter('leadInternalNotes', itemIndex, '') as string;
 	const leadUpdatedAt = ctx.getNodeParameter('leadUpdatedAt', itemIndex, '') as string;
-	const leadIncludeEmpty = ctx.getNodeParameter('leadIncludeEmpty', itemIndex, true) as boolean;
+	const leadIncludeEmpty = ctx.getNodeParameter('leadIncludeEmpty', itemIndex, false) as boolean;
 	const leadAdditionalFieldsRaw = ctx.getNodeParameter(
 		'leadAdditionalFields',
 		itemIndex,
@@ -60,13 +139,17 @@ async function handleLeads(
 	const leadEntriesLimit = ctx.getNodeParameter('leadEntriesLimit', itemIndex, 0) as number;
 	const leadListBodyType = ctx.getNodeParameter('leadListBodyType', itemIndex, 'json') as string;
 	const leadListPerPage = ctx.getNodeParameter('leadListPerPage', itemIndex, 0) as number;
+	const leadListCursor = ctx.getNodeParameter('leadListCursor', itemIndex, '') as string;
 	const leadListPage = ctx.getNodeParameter('leadListPage', itemIndex, 0) as number;
 	const leadListSearch = ctx.getNodeParameter('leadListSearch', itemIndex, '') as string;
+	const leadListSortBy = ctx.getNodeParameter('leadListSortBy', itemIndex, '') as string;
+	const leadListSortDir = ctx.getNodeParameter('leadListSortDir', itemIndex, '') as string;
 	const leadListFilterMode = ctx.getNodeParameter('leadListFilterMode', itemIndex, 'and') as string;
 	const leadListFilterRulesParam = ctx.getNodeParameter('leadListFilterRules', itemIndex, {}) as {
 		values?: Array<{
 			field?: string;
 			operator?: string;
+			value?: string;
 			valueText?: string;
 			valueDate?: string;
 			valueSelect?: string;
@@ -179,19 +262,34 @@ async function handleLeads(
 			body = parseJson(bodyRaw, 'Body');
 		} else if (leadBodyType === 'form') {
 			const formBody: JsonRecord = {};
-			if (leadIncludeEmpty || leadFirstName) formBody.first_name = leadFirstName;
-			if (leadIncludeEmpty || leadLastName) formBody.last_name = leadLastName;
-			if (leadIncludeEmpty || leadEmail) formBody.email = leadEmail;
-			if (leadIncludeEmpty || leadMobileNumber) formBody.mobile_number = leadMobileNumber;
-			if (leadIncludeEmpty || leadStatusId) formBody.status_id = leadStatusId;
-			if (leadIncludeEmpty || leadSourceId) formBody.source_id = leadSourceId;
-			if (leadIncludeEmpty || leadOwnerId) formBody.owner_id = leadOwnerId;
-			if (leadIncludeEmpty || leadCompany) formBody.company = leadCompany;
-			if (leadIncludeEmpty || leadJobTitle) formBody.job_title = leadJobTitle;
-			if (leadIncludeEmpty || leadServiceInterest) formBody.service_interest = leadServiceInterest;
-			if (leadIncludeEmpty || leadMonthlyBudget) formBody.monthly_budget = leadMonthlyBudget;
-			if (leadIncludeEmpty || leadTimeline) formBody.timeline = leadTimeline;
-			if (leadIncludeEmpty || leadInternalNotes) formBody.internal_notes = leadInternalNotes;
+			if (leadFirstName) formBody.first_name = leadFirstName;
+			if (leadLastName) formBody.last_name = leadLastName;
+			if (leadEmail) formBody.email = leadEmail;
+			if (leadMobileNumber) formBody.mobile_number = leadMobileNumber;
+			if (leadStatusId) formBody.status_id = leadStatusId;
+			if (leadSourceId) formBody.source_id = leadSourceId;
+			if (leadOwnerId) formBody.owner_id = leadOwnerId;
+			if (leadCompany) formBody.company = leadCompany;
+			if (leadJobTitle) formBody.job_title = leadJobTitle;
+			if (leadServiceInterest) formBody.service_interest = leadServiceInterest;
+			if (leadMonthlyBudget) formBody.monthly_budget = leadMonthlyBudget;
+			if (leadTimeline) formBody.timeline = leadTimeline;
+			if (leadInternalNotes) formBody.internal_notes = leadInternalNotes;
+			if (leadIncludeEmpty) {
+				if (leadFirstName === '') formBody.first_name = '';
+				if (leadLastName === '') formBody.last_name = '';
+				if (leadEmail === '') formBody.email = '';
+				if (leadMobileNumber === '') formBody.mobile_number = '';
+				if (leadStatusId === '') formBody.status_id = '';
+				if (leadSourceId === '') formBody.source_id = '';
+				if (leadOwnerId === '') formBody.owner_id = '';
+				if (leadCompany === '') formBody.company = '';
+				if (leadJobTitle === '') formBody.job_title = '';
+				if (leadServiceInterest === '') formBody.service_interest = '';
+				if (leadMonthlyBudget === '') formBody.monthly_budget = '';
+				if (leadTimeline === '') formBody.timeline = '';
+				if (leadInternalNotes === '') formBody.internal_notes = '';
+			}
 			if (leadUpdatedAt) formBody.updated_at = leadUpdatedAt;
 
 			if (leadTagIdsParam?.values?.length) {
@@ -215,44 +313,34 @@ async function handleLeads(
 		if (leadListBodyType === 'form') {
 			const listBody: JsonRecord = {};
 			if (leadListPerPage) listBody.per_page = leadListPerPage;
+			if (leadListCursor) listBody.cursor = leadListCursor;
 			if (leadListPage) listBody.page = leadListPage;
 			if (leadListSearch) listBody.search = leadListSearch;
-			const noValueOperators = new Set([
-				'Is Empty',
-				'Is Not Empty',
-				'Today',
-				'Yesterday',
-				'This Week',
-				'Last Week',
-				'This Month',
-				'Last Month',
-				'This Year',
-			]);
-			const resolveFilterValue = (rule: {
-				valueSelect?: string;
-				valueDate?: string;
-				valueText?: string;
-			}): string => {
-				const candidates = [rule?.valueSelect, rule?.valueDate, rule?.valueText];
-				for (const candidate of candidates) {
-					if (candidate === undefined || candidate === null) continue;
-					const trimmed = candidate.toString().trim();
-					if (trimmed.length > 0) return trimmed;
-				}
-				return '';
-			};
+			if (leadListSortBy) listBody.sort_by = leadListSortBy;
+			if (leadListSortDir) listBody.sort_dir = leadListSortDir;
+			const queryFields = await fetchQueryFields(ctx, apiConfig, 'lead.list');
 			const filterRules = (leadListFilterRulesParam?.values ?? [])
 				.map((rule) => ({
 					field: (rule?.field ?? '').toString().trim(),
 					operator: (rule?.operator ?? '').toString().trim(),
-					value: resolveFilterValue(rule ?? {}),
+					value: resolveRuleValue(
+						rule ?? {},
+						queryFields.find((field) => field.key === (rule?.field ?? '').toString().trim()),
+					),
 				}))
 				.filter((rule) => rule.field.length > 0 && rule.operator.length > 0)
 				.map((rule) => {
-					if (noValueOperators.has(rule.operator)) {
+					if (noValueOperators.has(normalizeOperator(rule.operator))) {
 						return { field: rule.field, operator: rule.operator };
 					}
-					return rule.value.length > 0 ? rule : { field: rule.field, operator: rule.operator };
+					if (!rule.value.length) {
+						throw new NodeOperationError(
+							ctx.getNode(),
+							`Filter value is required for operator "${rule.operator}" on field "${rule.field}"`,
+							{ itemIndex, description: 'Provide a value or choose a valueless operator' },
+						);
+					}
+					return rule;
 				});
 			if (filterRules.length) {
 				listBody.filter = {
@@ -264,10 +352,11 @@ async function handleLeads(
 		} else {
 			const listBody: JsonRecord = (body ?? {}) as JsonRecord;
 			if (leadListPerPage) listBody.per_page = listBody.per_page ?? leadListPerPage;
+			if (leadListCursor) listBody.cursor = listBody.cursor ?? leadListCursor;
 			if (leadListPage) listBody.page = listBody.page ?? leadListPage;
 			if (leadListSearch) listBody.search = listBody.search ?? leadListSearch;
-			delete listBody.sort_by;
-			delete listBody.sort_dir;
+			if (leadListSortBy) listBody.sort_by = listBody.sort_by ?? leadListSortBy;
+			if (leadListSortDir) listBody.sort_dir = listBody.sort_dir ?? leadListSortDir;
 			const filter = listBody.filter as JsonRecord | undefined;
 			if (filter) {
 				const rules = filter.rules as unknown;
@@ -294,33 +383,6 @@ async function handleLeads(
 		const response = await ctx.helpers.request(options);
 		return { json: response };
 	} catch (error) {
-		if (operation === 'listLeads' && options.body && typeof options.body === 'object') {
-			const errorData = (error as { response?: { data?: JsonRecord; status?: number } })?.response
-				?.data as JsonRecord | undefined;
-			const status = (error as { response?: { status?: number } })?.response?.status;
-			const errors = (errorData?.errors ?? {}) as Record<string, unknown>;
-			const hasFilterModeError = Boolean(errors['filter.mode']);
-			if (status === 422 && hasFilterModeError) {
-				const patchedBody = { ...(options.body as JsonRecord) };
-				let changed = false;
-				if (hasFilterModeError) {
-					const filter = patchedBody.filter as JsonRecord | undefined;
-					if (filter) {
-						filter.mode = normalizeFilterMode((filter.mode as string) ?? '');
-						const rules = filter.rules as unknown;
-						if (!Array.isArray(rules) || rules.length === 0) {
-							delete patchedBody.filter;
-						}
-						changed = true;
-					}
-				}
-				if (changed) {
-					const retryOptions = { ...options, body: patchedBody };
-					const response = await ctx.helpers.request(retryOptions);
-					return { json: response };
-				}
-			}
-		}
 		throw new NodeApiError(ctx.getNode(), error as unknown as JsonObject, { itemIndex });
 	}
 }
