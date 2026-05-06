@@ -1,18 +1,10 @@
 import type { ICredentialTestRequest, ICredentialType, Icon, INodeProperties } from 'n8n-workflow';
-import { LoggerProxy } from 'n8n-workflow';
 
 export class AdhubAppApi implements ICredentialType {
 	name = 'adhubAppApi';
 	displayName = 'AdHub App API';
-	documentationUrl = 'https://docs.n8n.io/integrations/creating-nodes/';
+	documentationUrl = 'https://adhub-main-d1fcap.laravel.cloud/docs/swagger';
 	icon: Icon = 'file:adhubapp.svg';
-
-	constructor() {
-		LoggerProxy.info('[AdhubAppApi] credential_type_loaded', {
-			credentialType: this.name,
-			displayName: this.displayName,
-		});
-	}
 
 	authenticate = {
 		type: 'generic' as const,

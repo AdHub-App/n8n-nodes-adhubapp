@@ -1,7 +1,14 @@
 import type { IExecuteFunctions, INodeExecutionData, JsonObject } from 'n8n-workflow';
 import { NodeApiError, NodeOperationError } from 'n8n-workflow';
 
-import { type ApiConfig, buildRequestOptions, parseJson, JsonRecord } from '../helpers';
+import {
+	type ApiConfig,
+	buildRequestOptions,
+	parseJson,
+	fetchQueryFields,
+	resolveRuleValue,
+	JsonRecord,
+} from '../helpers';
 
 type TaskOperations =
 	| 'listTasks'
@@ -12,72 +19,6 @@ type TaskOperations =
 	| 'completeTask'
 	| 'bulkCompleteTasks'
 	| 'bulkDeleteTasks';
-
-type QueryFieldDefinition = {
-	key?: string;
-	type?: string;
-	options?: Array<{ value?: string; label?: string }>;
-};
-
-async function fetchQueryFields(
-	ctx: IExecuteFunctions,
-	apiConfig: ApiConfig,
-	context: 'lead.list' | 'task.list',
-): Promise<QueryFieldDefinition[]> {
-	const options = buildRequestOptions({
-		method: 'GET',
-		endpoint: '/query-builder/fields',
-		apiConfig,
-		qs: { context },
-	});
-	const response = (await ctx.helpers.request(options)) as unknown;
-	if (Array.isArray(response)) return response as QueryFieldDefinition[];
-	if (response && typeof response === 'object') {
-		const payload = response as JsonRecord;
-		const direct = payload.data;
-		if (Array.isArray(direct)) return direct as QueryFieldDefinition[];
-	}
-	return [];
-}
-
-function resolveRuleValue(
-	rule: {
-		value?: string;
-		operator?: string;
-		valueSelect?: string;
-		valueDate?: string;
-		valueText?: string;
-	},
-	field?: QueryFieldDefinition,
-): string {
-	const normalizedType = (field?.type ?? '').toString().trim().toLowerCase();
-	const optionList = Array.isArray(field?.options) ? field.options : [];
-	const hasSelectOptions = optionList.length > 0;
-	const normalizedOperator = (rule?.operator ?? '').toString().trim().toLowerCase();
-	const usesTextForDateInput =
-		normalizedOperator === 'between' ||
-		normalizedOperator === 'x days before' ||
-		normalizedOperator === 'x days after';
-	const directValue = (rule?.value ?? '').toString().trim();
-	const selectValue = (rule?.valueSelect ?? '').toString().trim();
-	const dateValue = (rule?.valueDate ?? '').toString().trim();
-	const textValue = (rule?.valueText ?? '').toString().trim();
-
-	if (directValue) {
-		return directValue;
-	}
-
-	if (hasSelectOptions) {
-		return selectValue || textValue || dateValue;
-	}
-	if (normalizedType.includes('date') || normalizedType.includes('time')) {
-		if (usesTextForDateInput) {
-			return textValue || dateValue || selectValue;
-		}
-		return dateValue || textValue || selectValue;
-	}
-	return textValue || selectValue || dateValue;
-}
 
 async function handleTasks(
 	ctx: IExecuteFunctions,

@@ -1,32 +1,38 @@
-const fs = require('fs');
-const path = require('path');
+#!/usr/bin/env node
+'use strict';
 
-const packageRoot = path.resolve(__dirname, '..');
-const initCwd = process.env.INIT_CWD ? path.resolve(process.env.INIT_CWD) : null;
-const repoNodeModules = path.join(packageRoot, 'node_modules');
+/**
+ * verify-install.js
+ *
+ * Runs as the `preinstall` hook. Warns if the package is being installed
+ * outside of n8n's community node manager, where it won't be picked up
+ * correctly by n8n's node loader.
+ */
 
-if (!initCwd || initCwd === packageRoot) {
-	process.exit(0);
-}
+const isN8nInstall =
+	process.env.npm_config_global === 'true' ||
+	process.env.N8N_CUSTOM_EXTENSIONS !== undefined ||
+	process.env.N8N_USER_FOLDER !== undefined;
 
-// Installing from a local repo path can create a junction to the whole checkout.
-// n8n then scans this repo's dev dependencies and mistakes files like
-// brotli-wasm/index.node.js for custom n8n node classes.
-if (fs.existsSync(repoNodeModules)) {
-	console.error(
-		[
-			'Local install from the repository root is blocked for n8n-nodes-adhubapp.',
-			'',
-			'Why this fails:',
-			'- npm links the whole repository into node_modules',
-			"- that includes this repo's dev node_modules",
-			'- n8n scans nested *.node.js files and crashes on dependency files such as brotli-wasm/index.node.js',
-			'',
-			'Install one of these instead:',
-			`- ${path.join(packageRoot, 'dist')}`,
-			'- a tarball created with `npm pack`',
-			'- the published npm package',
-		].join('\n'),
+if (!isN8nInstall) {
+	console.warn('');
+	console.warn('  ⚠️  AdHub n8n Community Node');
+	console.warn('');
+	console.warn(
+		'  This package is designed to be installed via the n8n community nodes interface,',
 	);
-	process.exit(1);
+	console.warn(
+		'  not directly via npm. Installing via npm will not automatically make the nodes',
+	);
+	console.warn('  available inside n8n.');
+	console.warn('');
+	console.warn('  To install correctly:');
+	console.warn('  1. Open n8n → Settings → Community Nodes');
+	console.warn('  2. Click "Install a community node"');
+	console.warn('  3. Enter: n8n-nodes-adhubapp');
+	console.warn('');
+	console.warn(
+		'  For self-hosted installs requiring manual npm install, see the README.',
+	);
+	console.warn('');
 }

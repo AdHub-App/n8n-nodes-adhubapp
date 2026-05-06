@@ -1,176 +1,109 @@
-# AdHub App n8n Node
+# n8n-nodes-adhubapp
 
-An n8n community node for managing AdHub leads, tasks, lead sources, lead statuses, lead tags, activities, and custom fields.
+An [n8n](https://n8n.io) community node package for [AdHub](https://adhubapp.com) — manage leads, tasks, activities, notes, custom fields, statuses, tags, and sources directly from your n8n workflows.
 
-## Local install note
+> **v1.0.0** — stable release. Some advanced features (sorting endpoints, task status updates) are under active development and will be added in upcoming minor versions.
 
-Do not install this package into n8n from the repository root path. On Windows, `npm install <repo-path>` can link the whole checkout, including this repo's dev `node_modules`, and n8n may crash while scanning dependency files such as `brotli-wasm/index.node.js`.
-
-Use one of these instead:
-
-- Install from the compiled `dist` folder
-- Install a tarball created with `npm pack`
-- Install the published npm package
+---
 
 ## Features
 
-- Lead Sources: list, create, get, update, delete
-- Lead Statuses: list, create, get, update, delete
-- Lead Tags: list, create, get, update, delete
-- Leads: list, create, get, update, delete (with advanced filtering)
-- Lead extras: query fields, timeline, entries
-- Lead Activities: list types, list, create, get, update, delete
-- Lead Custom Fields: list, create, get, update, delete
-- Tasks: list, create, get, update, delete
+### Action Node — *AdHub App*
+
+| Resource | Operations |
+|---|---|
+| **Lead** | List, Create, Get, Update, Delete, Bulk Create, Bulk Delete, Bulk Update Fields, Bulk Sync Tags, Bulk Update Custom Fields, Timeline, Entries, List Query Fields |
+| **Lead Activity** | List, List Types, Create, Get, Update, Delete |
+| **Lead Custom Field** | List, Create, Get, Update, Delete |
+| **Lead Note** | List, Create, Get, Update, Delete |
+| **Lead Source** | List, Create, Get, Update, Delete |
+| **Lead Status** | List, Create, Get, Update, Delete |
+| **Lead Tag** | List, Create, Get, Update, Delete |
+| **Task** | List, Create, Get, Update, Delete, Complete, Bulk Complete, Bulk Delete |
+
+The **List Leads** and **List Tasks** operations include a form-driven filter builder backed by the AdHub query builder API — pick fields, operators, and values from dropdowns without writing raw JSON.
+
+### Trigger Node — *AdHub App Trigger*
+
+Reacts to AdHub webhook events. Configure which event types to listen for:
+
+- `lead.created`, `lead.updated`, `lead.deleted` (or `lead.*` for all lead events)
+- `task.created`, `task.updated`, `task.deleted` (or `task.*` for all task events)
+- `*` for all events
+
+---
 
 ## Installation
 
-1. Install dependencies
+### Via n8n UI (recommended)
+
+1. Open n8n → **Settings** → **Community Nodes**
+2. Click **Install a community node**
+3. Enter `n8n-nodes-adhubapp`
+4. Click **Install**
+
+### Self-hosted (manual)
 
 ```bash
-npm install
+npm install n8n-nodes-adhubapp
 ```
 
-2. Start development server
+Then restart n8n. For Docker-based installs, add the package to your `N8N_CUSTOM_EXTENSIONS` path.
 
-```bash
-npm run dev
+---
+
+## Authentication
+
+1. In n8n, go to **Credentials** → **New** → search for **AdHub App API**
+2. Enter your **n8n Integration Token** from AdHub (Settings → Integrations → n8n)
+3. Click **Test** to verify — you should see a green "Connected" status
+
+---
+
+## Usage
+
+### Filtering Leads
+
+The **List Leads** operation supports two body modes:
+
+- **Form** — use the visual filter builder to add rules, pick fields from your AdHub account, set operators and values
+- **JSON** — paste a raw JSON body for full control
+
+Example filter body (JSON mode):
+
+```json
+{
+  "per_page": 50,
+  "filter": {
+    "mode": "and",
+    "rules": [
+      { "field": "lead.status", "operator": "Equals To", "value": "New" },
+      { "field": "lead.created_at", "operator": "This Week" }
+    ]
+  }
+}
 ```
 
-3. In a second terminal, start n8n with live reload enabled
+### Webhook Trigger
 
-```bash
-npm run dev:server
-```
+The trigger node provides a webhook URL to paste into AdHub (Settings → Integrations → Webhooks). Each n8n workflow gets a unique webhook URL. Select the event types you care about in the trigger node — events that don't match are acknowledged and dropped without executing the workflow.
 
-## Credentials
+---
 
-Create credentials named `AdHub App API` in n8n and provide:
+## Compatibility
 
-- `n8n Integration Token`: the one-time token generated from `Settings -> Integrations -> n8n`
-- `Ignore SSL Issues`: optional for local or test environments with an incomplete TLS certificate chain
+- **n8n** ≥ 1.0.0
+- **Node.js** ≥ 18
 
-When you test the credential, n8n verifies the token against `https://web.adhubapp.com/api/v1/integrations/n8n/verify`.
-
-Recommended setup flow:
-
-1. Create one AdHub Trigger node in an active n8n workflow and copy its production webhook URL.
-2. In AdHub, open `Settings -> Integrations -> n8n`.
-3. Paste that production n8n webhook URL into AdHub.
-4. Select the trigger events and API scopes in AdHub.
-5. Copy the one-time token shown by AdHub.
-6. Save that token in the credential.
-7. Test the credential to verify it.
-
-Notes:
-
-- Use the same token for AdHub API actions and webhook-linked workflows.
-- AdHub manages the webhook subscription on its side. The n8n trigger node receives the webhook payload but does not create or delete AdHub webhook subscriptions through the API.
-- Due to AdHub API limitations, you can use just one AdHub trigger webhook URL for each AdHub integration.
-- Use one active AdHub Trigger workflow as the intake workflow, then route events with normal n8n nodes such as Switch, IF, or Execute Workflow.
-- Do not save an n8n test webhook URL in AdHub. Test URLs are temporary editor URLs; AdHub should use a production URL from an active workflow.
-- The trigger node can filter incoming events locally by the selected Trigger On event types.
-- If your test host uses a self-signed or incomplete certificate chain, enable `Ignore SSL Issues` temporarily or add the issuing CA to n8n's trust store.
-
-## Trigger routing
-
-AdHub can send events to one webhook URL only. Configure that URL from one active n8n workflow that starts with the AdHub Trigger:
-
-1. AdHub sends every selected event to the single saved n8n production webhook URL.
-2. The receiving AdHub Trigger node reads the incoming event name.
-3. The trigger starts the workflow only when its Trigger On selection matches the event.
-4. Use downstream n8n nodes to branch by event type or call other workflows.
-
-This keeps the trigger aligned with n8n's webhook model: one incoming webhook starts the workflow that owns that production URL, and routing happens inside the workflow.
-
-## Operations
-
-Resource: Lead Source
-
-- List
-- Create
-- Get
-- Update
-- Delete
-
-Resource: Lead Status
-
-- List
-- Create
-- Get
-- Update
-- Delete
-
-Resource: Lead Tag
-
-- List
-- Create
-- Get
-- Update
-- Delete
-
-Resource: Lead
-
-- List
-- Create
-- Get
-- Update
-- Delete
-- List Query Fields
-- Timeline
-- Entries
-
-Resource: Lead Activity
-
-- List Types
-- List
-- Create
-- Get
-- Update
-- Delete
-
-Resource: Lead Custom Field
-
-- List
-- Create
-- Get
-- Update
-- Delete
-
-Resource: Task
-
-- List
-- Create
-- Get
-- Update
-- Delete
-
-## Notes
-
-- For lead creation and update you can send either form fields or a JSON body.
-- When using form fields, Additional Fields supports a JSON object with custom keys.
-- For lead list filtering, see [LEAD_LIST_FILTERING.md](LEAD_LIST_FILTERING.md) for detailed documentation.
-- The trigger node supports local filtering for incoming AdHub webhook events such as `lead.created`, `lead.updated`, `task.created`, and `task.updated`.
-- If a trigger does not run, confirm the AdHub integration is saving a production n8n URL, the workflow is active, the event is selected in AdHub, and the trigger node's Trigger On selection matches the incoming payload.
-
-## Build
-
-```bash
-npm run build
-```
-
-## Lint
-
-```bash
-npm run lint
-```
-
-## Release
-
-```bash
-npm run release
-```
+---
 
 ## License
 
-MIT
+[MIT](LICENSE.md)
+
+---
+
+## Support
+
+- **AdHub support:** support@adhub.app
+- **Issues:** [github.com/AdHub-App/n8n-nodes-adhubapp/issues](https://github.com/AdHub-App/n8n-nodes-adhubapp/issues)

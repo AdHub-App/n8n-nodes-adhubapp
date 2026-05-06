@@ -10,8 +10,7 @@ import { NodeConnectionTypes, NodeOperationError } from 'n8n-workflow';
 
 import {
 	type AdhubAppCredentials,
-	buildRequestOptions,
-	JsonRecord,
+	fetchQueryFields,
 } from './helpers';
 import { handleLeadSources } from './resources/leadSources';
 import { handleLeadStatuses } from './resources/leadStatuses';
@@ -91,7 +90,8 @@ function readCurrentStringParam(
 		}
 	}
 
-	const searchNested = (value: unknown): string => {
+	const searchNested = (value: unknown, depth = 0): string => {
+		if (depth > 6) return '';
 		const direct = extractString(value);
 		if (direct) return direct;
 		if (!value || typeof value !== 'object') {
@@ -99,7 +99,7 @@ function readCurrentStringParam(
 		}
 		if (Array.isArray(value)) {
 			for (const entry of value) {
-				const match = searchNested(entry);
+				const match = searchNested(entry, depth + 1);
 				if (match) return match;
 			}
 			return '';
@@ -112,7 +112,7 @@ function readCurrentStringParam(
 			return parameterMatch;
 		}
 		for (const entry of Object.values(record)) {
-			const match = searchNested(entry);
+			const match = searchNested(entry, depth + 1);
 			if (match) return match;
 		}
 		return '';
@@ -272,42 +272,12 @@ type LeadNoteOperation = Parameters<typeof handleLeadNotes>[2];
 type LeadCustomFieldOperation = Parameters<typeof handleLeadCustomFields>[2];
 type TaskOperation = Parameters<typeof handleTasks>[2];
 
-async function fetchQueryFields(
+async function loadQueryFields(
 	ctx: ILoadOptionsFunctions,
 	context: 'lead.list' | 'task.list',
 ): Promise<QueryField[]> {
 	const credentials = await ctx.getCredentials<AdhubAppCredentials>('adhubAppApi');
-	const apiConfig = credentials;
-	const options = buildRequestOptions({
-		method: 'GET',
-		endpoint: '/query-builder/fields',
-		apiConfig,
-		qs: { context } as JsonRecord,
-	});
-	const response = (await ctx.helpers.request(options)) as unknown;
-	const asList = (value: unknown): QueryField[] => {
-		if (!Array.isArray(value)) return [];
-		return value.flat() as QueryField[];
-	};
-	if (Array.isArray(response)) {
-		return response.flat() as QueryField[];
-	}
-	if (response && typeof response === 'object') {
-		const payload = response as JsonRecord;
-		const nestedData = payload.data as JsonRecord | QueryField[] | undefined;
-		const candidates = [
-			payload.data,
-			payload.fields,
-			payload.items,
-			(nestedData as JsonRecord | undefined)?.data,
-			(nestedData as JsonRecord | undefined)?.items,
-		];
-		for (const candidate of candidates) {
-			const list = asList(candidate);
-			if (list.length > 0) return list;
-		}
-	}
-	return [];
+	return fetchQueryFields(ctx, credentials, context) as Promise<QueryField[]>;
 }
 
 export class AdhubApp implements INodeType {
@@ -361,11 +331,11 @@ export class AdhubApp implements INodeType {
 					},
 				},
 				options: [
-					{ name: 'Create', value: 'createLeadSource', action: 'Lead sources create' },
-					{ name: 'Delete', value: 'deleteLeadSource', action: 'Lead sources delete' },
-					{ name: 'Get', value: 'getLeadSource', action: 'Lead sources get' },
-					{ name: 'List', value: 'listLeadSources', action: 'Lead sources list' },
-					{ name: 'Update', value: 'updateLeadSource', action: 'Lead sources update' },
+					{ name: 'Create', value: 'createLeadSource', action: 'Create a lead source' },
+					{ name: 'Delete', value: 'deleteLeadSource', action: 'Delete a lead source' },
+					{ name: 'Get', value: 'getLeadSource', action: 'Get a lead source' },
+					{ name: 'List', value: 'listLeadSources', action: 'Get all lead sources' },
+					{ name: 'Update', value: 'updateLeadSource', action: 'Update a lead source' },
 				],
 				default: 'listLeadSources',
 				noDataExpression: true,
@@ -381,11 +351,11 @@ export class AdhubApp implements INodeType {
 					},
 				},
 				options: [
-					{ name: 'Create', value: 'createLeadStatus', action: 'Lead statuses create' },
-					{ name: 'Delete', value: 'deleteLeadStatus', action: 'Lead statuses delete' },
-					{ name: 'Get', value: 'getLeadStatus', action: 'Lead statuses get' },
-					{ name: 'List', value: 'listLeadStatuses', action: 'Lead statuses list' },
-					{ name: 'Update', value: 'updateLeadStatus', action: 'Lead statuses update' },
+					{ name: 'Create', value: 'createLeadStatus', action: 'Create a lead status' },
+					{ name: 'Delete', value: 'deleteLeadStatus', action: 'Delete a lead status' },
+					{ name: 'Get', value: 'getLeadStatus', action: 'Get a lead status' },
+					{ name: 'List', value: 'listLeadStatuses', action: 'Get all lead statuses' },
+					{ name: 'Update', value: 'updateLeadStatus', action: 'Update a lead status' },
 				],
 				default: 'listLeadStatuses',
 				noDataExpression: true,
@@ -401,11 +371,11 @@ export class AdhubApp implements INodeType {
 					},
 				},
 				options: [
-					{ name: 'Create', value: 'createLeadTag', action: 'Lead tags create' },
-					{ name: 'Delete', value: 'deleteLeadTag', action: 'Lead tags delete' },
-					{ name: 'Get', value: 'getLeadTag', action: 'Lead tags get' },
-					{ name: 'List', value: 'listLeadTags', action: 'Lead tags list' },
-					{ name: 'Update', value: 'updateLeadTag', action: 'Lead tags update' },
+					{ name: 'Create', value: 'createLeadTag', action: 'Create a lead tag' },
+					{ name: 'Delete', value: 'deleteLeadTag', action: 'Delete a lead tag' },
+					{ name: 'Get', value: 'getLeadTag', action: 'Get a lead tag' },
+					{ name: 'List', value: 'listLeadTags', action: 'Get all lead tags' },
+					{ name: 'Update', value: 'updateLeadTag', action: 'Update a lead tag' },
 				],
 				default: 'listLeadTags',
 				noDataExpression: true,
@@ -421,31 +391,31 @@ export class AdhubApp implements INodeType {
 					},
 				},
 				options: [
-					{ name: 'Bulk Create', value: 'bulkCreateLeads', action: 'Leads bulk create' },
-					{ name: 'Bulk Delete', value: 'bulkDeleteLeads', action: 'Leads bulk delete' },
-					{ name: 'Bulk Sync Tags', value: 'bulkSyncLeadTags', action: 'Leads bulk sync tags' },
+					{ name: 'Bulk Create', value: 'bulkCreateLeads', action: 'Bulk create leads' },
+					{ name: 'Bulk Delete', value: 'bulkDeleteLeads', action: 'Bulk delete leads' },
+					{ name: 'Bulk Sync Tags', value: 'bulkSyncLeadTags', action: 'Bulk sync lead tags' },
 					{
 						name: 'Bulk Update Custom Fields',
 						value: 'bulkUpdateLeadCustomFields',
-						action: 'Leads bulk update custom fields',
+						action: 'Bulk update lead custom fields',
 					},
 					{
 						name: 'Bulk Update Fields',
 						value: 'bulkUpdateLeadFields',
-						action: 'Leads bulk update fields',
+						action: 'Bulk update lead fields',
 					},
-					{ name: 'Create', value: 'createLead', action: 'Leads create' },
-					{ name: 'Delete', value: 'deleteLead', action: 'Leads delete' },
-					{ name: 'Entries', value: 'listLeadEntries', action: 'Leads entries' },
-					{ name: 'Get', value: 'getLead', action: 'Leads get' },
-					{ name: 'List', value: 'listLeads', action: 'Leads list' },
+					{ name: 'Create', value: 'createLead', action: 'Create a lead' },
+					{ name: 'Delete', value: 'deleteLead', action: 'Delete a lead' },
+					{ name: 'Get', value: 'getLead', action: 'Get a lead' },
+					{ name: 'Get Entries', value: 'listLeadEntries', action: 'Get lead entries' },
+					{ name: 'Get Timeline', value: 'getLeadTimeline', action: 'Get lead timeline' },
+					{ name: 'List', value: 'listLeads', action: 'Get all leads' },
 					{
 						name: 'List Query Fields',
 						value: 'listLeadQueryFields',
-						action: 'Leads list query fields',
+						action: 'List lead query fields',
 					},
-					{ name: 'Timeline', value: 'getLeadTimeline', action: 'Leads timeline' },
-					{ name: 'Update', value: 'updateLead', action: 'Leads update' },
+					{ name: 'Update', value: 'updateLead', action: 'Update a lead' },
 				],
 				default: 'listLeads',
 				noDataExpression: true,
@@ -461,16 +431,16 @@ export class AdhubApp implements INodeType {
 					},
 				},
 				options: [
-					{ name: 'Create', value: 'createLeadActivity', action: 'Lead activities create' },
-					{ name: 'Delete', value: 'deleteLeadActivity', action: 'Lead activities delete' },
-					{ name: 'Get', value: 'getLeadActivity', action: 'Lead activities get' },
-					{ name: 'List', value: 'listLeadActivities', action: 'Lead activities list' },
+					{ name: 'Create', value: 'createLeadActivity', action: 'Create a lead activity' },
+					{ name: 'Delete', value: 'deleteLeadActivity', action: 'Delete a lead activity' },
+					{ name: 'Get', value: 'getLeadActivity', action: 'Get a lead activity' },
+					{ name: 'List', value: 'listLeadActivities', action: 'Get all lead activities' },
 					{
 						name: 'List Types',
 						value: 'listLeadActivityTypes',
-						action: 'Lead activity types list',
+						action: 'List lead activity types',
 					},
-					{ name: 'Update', value: 'updateLeadActivity', action: 'Lead activities update' },
+					{ name: 'Update', value: 'updateLeadActivity', action: 'Update a lead activity' },
 				],
 				default: 'listLeadActivities',
 				noDataExpression: true,
@@ -486,11 +456,11 @@ export class AdhubApp implements INodeType {
 					},
 				},
 				options: [
-					{ name: 'Create', value: 'createLeadNote', action: 'Lead notes create' },
-					{ name: 'Delete', value: 'deleteLeadNote', action: 'Lead notes delete' },
-					{ name: 'Get', value: 'getLeadNote', action: 'Lead notes get' },
-					{ name: 'List', value: 'listLeadNotes', action: 'Lead notes list' },
-					{ name: 'Update', value: 'updateLeadNote', action: 'Lead notes update' },
+					{ name: 'Create', value: 'createLeadNote', action: 'Create a lead note' },
+					{ name: 'Delete', value: 'deleteLeadNote', action: 'Delete a lead note' },
+					{ name: 'Get', value: 'getLeadNote', action: 'Get a lead note' },
+					{ name: 'List', value: 'listLeadNotes', action: 'Get all lead notes' },
+					{ name: 'Update', value: 'updateLeadNote', action: 'Update a lead note' },
 				],
 				default: 'listLeadNotes',
 				noDataExpression: true,
@@ -506,11 +476,11 @@ export class AdhubApp implements INodeType {
 					},
 				},
 				options: [
-					{ name: 'Create', value: 'createLeadCustomField', action: 'Lead custom fields create' },
-					{ name: 'Delete', value: 'deleteLeadCustomField', action: 'Lead custom fields delete' },
-					{ name: 'Get', value: 'getLeadCustomField', action: 'Lead custom fields get' },
-					{ name: 'List', value: 'listLeadCustomFields', action: 'Lead custom fields list' },
-					{ name: 'Update', value: 'updateLeadCustomField', action: 'Lead custom fields update' },
+					{ name: 'Create', value: 'createLeadCustomField', action: 'Create a lead custom field' },
+					{ name: 'Delete', value: 'deleteLeadCustomField', action: 'Delete a lead custom field' },
+					{ name: 'Get', value: 'getLeadCustomField', action: 'Get a lead custom field' },
+					{ name: 'List', value: 'listLeadCustomFields', action: 'Get all lead custom fields' },
+					{ name: 'Update', value: 'updateLeadCustomField', action: 'Update a lead custom field' },
 				],
 				default: 'listLeadCustomFields',
 				noDataExpression: true,
@@ -526,14 +496,14 @@ export class AdhubApp implements INodeType {
 					},
 				},
 				options: [
-					{ name: 'Bulk Complete', value: 'bulkCompleteTasks', action: 'Tasks bulk complete' },
-					{ name: 'Bulk Delete', value: 'bulkDeleteTasks', action: 'Tasks bulk delete' },
-					{ name: 'Complete', value: 'completeTask', action: 'Tasks complete' },
-					{ name: 'Create', value: 'createTask', action: 'Tasks create' },
-					{ name: 'Delete', value: 'deleteTask', action: 'Tasks delete' },
-					{ name: 'Get', value: 'getTask', action: 'Tasks get' },
-					{ name: 'List', value: 'listTasks', action: 'Tasks list' },
-					{ name: 'Update', value: 'updateTask', action: 'Tasks update' },
+					{ name: 'Bulk Complete', value: 'bulkCompleteTasks', action: 'Bulk complete tasks' },
+					{ name: 'Bulk Delete', value: 'bulkDeleteTasks', action: 'Bulk delete tasks' },
+					{ name: 'Complete', value: 'completeTask', action: 'Complete a task' },
+					{ name: 'Create', value: 'createTask', action: 'Create a task' },
+					{ name: 'Delete', value: 'deleteTask', action: 'Delete a task' },
+					{ name: 'Get', value: 'getTask', action: 'Get a task' },
+					{ name: 'List', value: 'listTasks', action: 'Get all tasks' },
+					{ name: 'Update', value: 'updateTask', action: 'Update a task' },
 				],
 				default: 'listTasks',
 				noDataExpression: true,
@@ -2238,7 +2208,7 @@ export class AdhubApp implements INodeType {
 	methods = {
 		loadOptions: {
 			async getLeadFilterFields(this: ILoadOptionsFunctions): Promise<INodePropertyOptions[]> {
-				const fields = await fetchQueryFields(this, 'lead.list');
+				const fields = await loadQueryFields(this, 'lead.list');
 				const category = getLeadFilterCategory(this);
 				const scopedFields = filterLeadFieldsByCategory(fields, category);
 				return scopedFields
@@ -2250,7 +2220,7 @@ export class AdhubApp implements INodeType {
 					}));
 			},
 			async getLeadGeneralFilterFields(this: ILoadOptionsFunctions): Promise<INodePropertyOptions[]> {
-				const fields = await fetchQueryFields(this, 'lead.list');
+				const fields = await loadQueryFields(this, 'lead.list');
 				return filterLeadFieldsByCategory(fields, 'general')
 					.filter((field) => field.key)
 					.map((field) => ({
@@ -2260,7 +2230,7 @@ export class AdhubApp implements INodeType {
 					}));
 			},
 			async getLeadMainFilterFields(this: ILoadOptionsFunctions): Promise<INodePropertyOptions[]> {
-				const fields = await fetchQueryFields(this, 'lead.list');
+				const fields = await loadQueryFields(this, 'lead.list');
 				return filterLeadFieldsByCategory(fields, 'leads')
 					.filter((field) => field.key)
 					.map((field) => ({
@@ -2270,7 +2240,7 @@ export class AdhubApp implements INodeType {
 					}));
 			},
 			async getLeadCustomFilterFields(this: ILoadOptionsFunctions): Promise<INodePropertyOptions[]> {
-				const fields = await fetchQueryFields(this, 'lead.list');
+				const fields = await loadQueryFields(this, 'lead.list');
 				return filterLeadFieldsByCategory(fields, 'leadCustomFields')
 					.filter((field) => field.key)
 					.map((field) => ({
@@ -2280,7 +2250,7 @@ export class AdhubApp implements INodeType {
 					}));
 			},
 			async getLeadTaskFilterFields(this: ILoadOptionsFunctions): Promise<INodePropertyOptions[]> {
-				const fields = await fetchQueryFields(this, 'lead.list');
+				const fields = await loadQueryFields(this, 'lead.list');
 				return filterLeadFieldsByCategory(fields, 'tasks')
 					.filter((field) => field.key)
 					.map((field) => ({
@@ -2290,7 +2260,7 @@ export class AdhubApp implements INodeType {
 					}));
 			},
 			async getLeadFilterCategories(this: ILoadOptionsFunctions): Promise<INodePropertyOptions[]> {
-				const fields = await fetchQueryFields(this, 'lead.list');
+				const fields = await loadQueryFields(this, 'lead.list');
 				const available = getAvailableLeadFilterCategories(fields);
 				const labelMap: Record<LeadFilterCategory, string> = {
 					general: 'General Filters',
@@ -2304,7 +2274,7 @@ export class AdhubApp implements INodeType {
 				}));
 			},
 			async getTaskFilterFields(this: ILoadOptionsFunctions): Promise<INodePropertyOptions[]> {
-				const fields = await fetchQueryFields(this, 'task.list');
+				const fields = await loadQueryFields(this, 'task.list');
 				return fields
 					.filter((field) => field.key)
 					.map((field) => ({
@@ -2315,7 +2285,7 @@ export class AdhubApp implements INodeType {
 			},
 			async getLeadFilterOperators(this: ILoadOptionsFunctions): Promise<INodePropertyOptions[]> {
 				const emptyOption = { name: 'Select', value: '' };
-				const fields = await fetchQueryFields(this, 'lead.list');
+				const fields = await loadQueryFields(this, 'lead.list');
 				const category = getLeadFilterCategory(this);
 				const scopedFields = filterLeadFieldsByCategory(fields, category);
 				const candidateKeys = [readLeadRuleFieldKey(this)].filter((key) => key.length > 0);
@@ -2330,7 +2300,7 @@ export class AdhubApp implements INodeType {
 			},
 			async getTaskFilterOperators(this: ILoadOptionsFunctions): Promise<INodePropertyOptions[]> {
 				const emptyOption = { name: 'Select', value: '' };
-				const fields = await fetchQueryFields(this, 'task.list');
+				const fields = await loadQueryFields(this, 'task.list');
 				const candidateKeys = [
 					readFixedCollectionRuleParam(this, 'taskListFilterRules', 'field'),
 					readCurrentStringParam(this, 'field'),
@@ -2350,7 +2320,7 @@ export class AdhubApp implements INodeType {
 				const fieldKey = readLeadRuleFieldKey(this);
 				const emptyOption = { name: 'Select', value: '' };
 				if (!fieldKey) return [emptyOption];
-				const fields = await fetchQueryFields(this, 'lead.list');
+				const fields = await loadQueryFields(this, 'lead.list');
 				const category = getLeadFilterCategory(this);
 				const scopedFields = filterLeadFieldsByCategory(fields, category);
 				const match = findQueryField(scopedFields, fieldKey);
@@ -2362,7 +2332,7 @@ export class AdhubApp implements INodeType {
 			},
 			async getLeadFilterValues(this: ILoadOptionsFunctions): Promise<INodePropertyOptions[]> {
 				const emptyOption = { name: 'Select', value: '' };
-				const fields = await fetchQueryFields(this, 'lead.list');
+				const fields = await loadQueryFields(this, 'lead.list');
 				const category = getLeadFilterCategory(this);
 				const scopedFields = filterLeadFieldsByCategory(fields, category);
 				const candidateKeys = [readLeadRuleFieldKey(this)].filter((key) => key.length > 0);
@@ -2380,7 +2350,7 @@ export class AdhubApp implements INodeType {
 				const fieldKey = readCurrentStringParam(this, 'field');
 				const emptyOption = { name: 'Select', value: '' };
 				if (!fieldKey) return [emptyOption];
-				const fields = await fetchQueryFields(this, 'task.list');
+				const fields = await loadQueryFields(this, 'task.list');
 				const match = findQueryField(fields, fieldKey);
 				const options = (match?.options ?? []).map((opt) => ({
 					name: opt.label ?? opt.value ?? '',
@@ -2390,7 +2360,7 @@ export class AdhubApp implements INodeType {
 			},
 			async getTaskFilterValues(this: ILoadOptionsFunctions): Promise<INodePropertyOptions[]> {
 				const emptyOption = { name: 'Select', value: '' };
-				const fields = await fetchQueryFields(this, 'task.list');
+				const fields = await loadQueryFields(this, 'task.list');
 				const candidateKeys = [
 					readFixedCollectionRuleParam(this, 'taskListFilterRules', 'field'),
 					readCurrentStringParam(this, 'field'),
@@ -2410,12 +2380,13 @@ export class AdhubApp implements INodeType {
 		const items = this.getInputData();
 		const returnData: INodeExecutionData[] = [];
 
+		// Fetch credentials once — not per item.
+		const credentials = await this.getCredentials<AdhubAppCredentials>('adhubAppApi');
+		const apiConfig = credentials;
+
 		for (let itemIndex = 0; itemIndex < items.length; itemIndex++) {
 			const resource = this.getNodeParameter('resource', itemIndex) as string;
 			const operation = this.getNodeParameter('operation', itemIndex) as string;
-
-			const credentials = await this.getCredentials<AdhubAppCredentials>('adhubAppApi', itemIndex);
-			const apiConfig = credentials;
 
 			try {
 				switch (resource) {

@@ -5,7 +5,7 @@ import type {
 	IWebhookFunctions,
 	IWebhookResponseData,
 } from 'n8n-workflow';
-import { LoggerProxy, NodeConnectionTypes } from 'n8n-workflow';
+import { NodeConnectionTypes } from 'n8n-workflow';
 
 import {
 	buildPayloadHash,
@@ -21,6 +21,15 @@ const DELIVERY_ID_HEADER_NAME = 'X-AdHub-Delivery-ID';
 const TIMESTAMP_HEADER_NAME = 'X-AdHub-Timestamp';
 const SIGNATURE_HEADER_NAME = 'X-AdHub-Signature';
 
+// Headers that should never be forwarded to workflow output.
+const SENSITIVE_HEADER_NAMES = new Set([
+	'authorization',
+	'x-api-key',
+	'cookie',
+	'set-cookie',
+	'proxy-authorization',
+]);
+
 export class AdhubAppTrigger implements INodeType {
 	description: INodeTypeDescription = {
 		displayName: 'AdHub App Trigger',
@@ -33,7 +42,6 @@ export class AdhubAppTrigger implements INodeType {
 			name: 'AdHub App Trigger',
 		},
 		icon: 'file:adhubapp.svg',
-		usableAsTool: true,
 		inputs: [],
 		outputs: [NodeConnectionTypes.Main],
 		credentials: [
@@ -88,15 +96,6 @@ export class AdhubAppTrigger implements INodeType {
 		const eventType = event.eventType ?? '';
 		const selectedEventTypes = this.getNodeParameter('eventTypes') as string[];
 
-		logInfo('webhook_received', {
-			workflowId: this.getWorkflow().id ?? 'unknown',
-			nodeId: this.getNode().id,
-			eventId,
-			eventType,
-			tenantId: event.tenantId,
-			deliveryId: event.deliveryId,
-		});
-
 		if (eventType === '') {
 			return buildAckResponse('ignored', 'Missing AdHub event type.');
 		}
@@ -105,6 +104,8 @@ export class AdhubAppTrigger implements INodeType {
 			return buildAckResponse('ignored', 'Event type did not match this trigger configuration.');
 		}
 
+		const safeHeaders = stripSensitiveHeaders(headers);
+
 		const payload = buildWebhookPayload({
 			body,
 			eventId,
@@ -112,7 +113,7 @@ export class AdhubAppTrigger implements INodeType {
 			timestamp: event.timestamp,
 			tenantId: event.tenantId,
 			provider: PROVIDER,
-			headers: headers as JsonRecord,
+			headers: safeHeaders as JsonRecord,
 		});
 
 		const workflowData: INodeExecutionData[][] = [this.helpers.returnJsonArray(payload)];
@@ -124,10 +125,13 @@ export class AdhubAppTrigger implements INodeType {
 				event: eventType,
 				event_id: eventId,
 			},
-			noWebhookResponse: false,
 		};
 	}
 }
+
+// ---------------------------------------------------------------------------
+// Helpers
+// ---------------------------------------------------------------------------
 
 type ExtractedEvent = {
 	eventId?: string;
@@ -136,6 +140,18 @@ type ExtractedEvent = {
 	tenantId?: string;
 	deliveryId?: string;
 };
+
+function stripSensitiveHeaders(
+	headers: Record<string, string | string[] | undefined>,
+): Record<string, string | string[] | undefined> {
+	const result: Record<string, string | string[] | undefined> = {};
+	for (const [key, value] of Object.entries(headers)) {
+		if (!SENSITIVE_HEADER_NAMES.has(key.toLowerCase())) {
+			result[key] = value;
+		}
+	}
+	return result;
+}
 
 function extractWebhookEvent(
 	body: JsonRecord,
@@ -187,7 +203,6 @@ function getHeaderValue(
 		if (key.toLowerCase() !== normalizedHeader) continue;
 		return Array.isArray(value) ? value[0] : value;
 	}
-
 	return undefined;
 }
 
@@ -225,10 +240,5 @@ function buildAckResponse(status: 'ignored', reason: string): IWebhookResponseDa
 			status,
 			reason,
 		},
-		noWebhookResponse: false,
 	};
-}
-
-function logInfo(message: string, payload: Record<string, unknown>) {
-	LoggerProxy.info(`[AdhubAppTrigger] ${message}`, payload);
 }

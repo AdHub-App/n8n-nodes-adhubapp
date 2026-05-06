@@ -56,7 +56,6 @@ async function handleLeadCustomFields(
 		case 'deleteLeadCustomField':
 			method = 'DELETE';
 			endpoint = `/lead-custom-fields/${customFieldId}`;
-			includeBody = true;
 			break;
 		default:
 			throw new NodeOperationError(ctx.getNode(), `Unsupported operation: ${operation}`, {
