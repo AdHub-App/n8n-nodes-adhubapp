@@ -31,6 +31,8 @@ type QueryField = {
 	options?: Array<{ value?: string; label?: string }>;
 };
 
+type LeadFilterCategory = 'general' | 'leads' | 'leadCustomFields' | 'tasks';
+
 const VALUE_LESS_FILTER_OPERATORS = [
 	'Is Empty',
 	'Is Not Empty',
@@ -118,6 +120,78 @@ function readCurrentStringParam(
 	};
 
 	return searchNested(ctx.getCurrentNodeParameters());
+}
+
+function getLeadFilterCategory(ctx: ILoadOptionsFunctions): LeadFilterCategory {
+	const rawCategory = (
+		readCurrentStringParam(ctx, 'category')
+	).toLowerCase();
+	switch (rawCategory) {
+		case 'general':
+		case 'leads':
+		case 'leadcustomfields':
+		case 'tasks':
+			return rawCategory === 'leadcustomfields' ? 'leadCustomFields' : (rawCategory as LeadFilterCategory);
+		default:
+			return 'leads';
+	}
+}
+
+function readLeadRuleFieldKey(ctx: ILoadOptionsFunctions): string {
+	const candidateKeys = [
+		readCurrentStringParam(ctx, 'fieldGeneral'),
+		readCurrentStringParam(ctx, 'fieldLeads'),
+		readCurrentStringParam(ctx, 'fieldLeadCustomFields'),
+		readCurrentStringParam(ctx, 'fieldTasks'),
+		readFixedCollectionRuleParam(ctx, 'leadListFilterRules', 'fieldGeneral'),
+		readFixedCollectionRuleParam(ctx, 'leadListFilterRules', 'fieldLeads'),
+		readFixedCollectionRuleParam(ctx, 'leadListFilterRules', 'fieldLeadCustomFields'),
+		readFixedCollectionRuleParam(ctx, 'leadListFilterRules', 'fieldTasks'),
+		readFixedCollectionRuleParam(ctx, 'leadListFilterRules', 'field'),
+		readCurrentStringParam(ctx, 'field'),
+	].filter((key) => key.length > 0);
+	return candidateKeys[0] ?? '';
+}
+
+function isTaskFieldKey(fieldKey: string): boolean {
+	const key = fieldKey.trim().toLowerCase();
+	return key.startsWith('task');
+}
+
+function isLeadCustomFieldKey(fieldKey: string): boolean {
+	const key = fieldKey.trim().toLowerCase();
+	return key.startsWith('cf_');
+}
+
+function isGeneralLeadFieldKey(fieldKey: string): boolean {
+	const key = fieldKey.trim().toLowerCase();
+	return key === 'lead.tag' || key === 'lead.segment';
+}
+
+function filterLeadFieldsByCategory(
+	fields: QueryField[],
+	category: LeadFilterCategory,
+): QueryField[] {
+	return fields.filter((field) => {
+		const key = (field.key ?? '').toString().trim();
+		if (!key) return false;
+		switch (category) {
+			case 'general':
+				return isGeneralLeadFieldKey(key);
+			case 'leadCustomFields':
+				return isLeadCustomFieldKey(key);
+			case 'tasks':
+				return isTaskFieldKey(key);
+			case 'leads':
+			default:
+				return !isGeneralLeadFieldKey(key) && !isLeadCustomFieldKey(key) && !isTaskFieldKey(key);
+		}
+	});
+}
+
+function getAvailableLeadFilterCategories(fields: QueryField[]): LeadFilterCategory[] {
+	const categories: LeadFilterCategory[] = ['general', 'leads', 'leadCustomFields', 'tasks'];
+	return categories.filter((category) => filterLeadFieldsByCategory(fields, category).length > 0);
 }
 
 function findQueryField(fields: QueryField[], fieldKey: string): QueryField | undefined {
@@ -879,12 +953,76 @@ export class AdhubApp implements INodeType {
 						displayName: 'Rule',
 						values: [
 							{
+								displayName: 'Category Name or ID',
+								name: 'category',
+								type: 'options',
+								default: 'leads',
+								typeOptions: {
+									loadOptionsMethod: 'getLeadFilterCategories',
+								},
+								description:
+									'Choose from the list, or specify an ID using an <a href="https://docs.n8n.io/code/expressions/">expression</a>',
+							},
+							{
 								displayName: 'Field Name or ID',
-								name: 'field',
+								name: 'fieldGeneral',
 								type: 'options',
 								default: '',
 								typeOptions: {
-									loadOptionsMethod: 'getLeadFilterFields',
+									loadOptionsMethod: 'getLeadGeneralFilterFields',
+								},
+								displayOptions: {
+									show: {
+										category: ['general'],
+									},
+								},
+								description:
+									'Choose from the list, or specify an ID using an <a href="https://docs.n8n.io/code/expressions/">expression</a>',
+							},
+							{
+								displayName: 'Field Name or ID',
+								name: 'fieldLeads',
+								type: 'options',
+								default: '',
+								typeOptions: {
+									loadOptionsMethod: 'getLeadMainFilterFields',
+								},
+								displayOptions: {
+									show: {
+										category: ['leads'],
+									},
+								},
+								description:
+									'Choose from the list, or specify an ID using an <a href="https://docs.n8n.io/code/expressions/">expression</a>',
+							},
+							{
+								displayName: 'Field Name or ID',
+								name: 'fieldLeadCustomFields',
+								type: 'options',
+								default: '',
+								typeOptions: {
+									loadOptionsMethod: 'getLeadCustomFilterFields',
+								},
+								displayOptions: {
+									show: {
+										category: ['leadCustomFields'],
+									},
+								},
+								description:
+									'Choose from the list, or specify an ID using an <a href="https://docs.n8n.io/code/expressions/">expression</a>',
+							},
+							{
+								displayName: 'Field Name or ID',
+								name: 'fieldTasks',
+								type: 'options',
+								default: '',
+								typeOptions: {
+									loadOptionsMethod: 'getLeadTaskFilterFields',
+								},
+								displayOptions: {
+									show: {
+										category: ['tasks'],
+									},
 								},
 								description:
 									'Choose from the list, or specify an ID using an <a href="https://docs.n8n.io/code/expressions/">expression</a>',
@@ -897,10 +1035,22 @@ export class AdhubApp implements INodeType {
 								typeOptions: {
 									loadOptionsMethod: 'getLeadFilterOperators',
 									loadOptionsDependsOn: [
-										'field',
-										'values.field',
+										'category',
+										'values.category',
+										'fieldGeneral',
+										'values.fieldGeneral',
+										'fieldLeads',
+										'values.fieldLeads',
+										'fieldLeadCustomFields',
+										'values.fieldLeadCustomFields',
+										'fieldTasks',
+										'values.fieldTasks',
 										'leadListFilterRules',
-										'leadListFilterRules.values.field',
+										'leadListFilterRules.values.category',
+										'leadListFilterRules.values.fieldGeneral',
+										'leadListFilterRules.values.fieldLeads',
+										'leadListFilterRules.values.fieldLeadCustomFields',
+										'leadListFilterRules.values.fieldTasks',
 									],
 								},
 								description:
@@ -2098,13 +2248,69 @@ export class AdhubApp implements INodeType {
 		loadOptions: {
 			async getLeadFilterFields(this: ILoadOptionsFunctions): Promise<INodePropertyOptions[]> {
 				const fields = await fetchQueryFields(this, 'lead.list');
-				return fields
+				const category = getLeadFilterCategory(this);
+				const scopedFields = filterLeadFieldsByCategory(fields, category);
+				return scopedFields
 					.filter((field) => field.key)
 					.map((field) => ({
 						name: field.label ?? field.key ?? '',
 						value: field.key ?? '',
 						description: field.type ? `Type: ${field.type}` : undefined,
 					}));
+			},
+			async getLeadGeneralFilterFields(this: ILoadOptionsFunctions): Promise<INodePropertyOptions[]> {
+				const fields = await fetchQueryFields(this, 'lead.list');
+				return filterLeadFieldsByCategory(fields, 'general')
+					.filter((field) => field.key)
+					.map((field) => ({
+						name: field.label ?? field.key ?? '',
+						value: field.key ?? '',
+						description: field.type ? `Type: ${field.type}` : undefined,
+					}));
+			},
+			async getLeadMainFilterFields(this: ILoadOptionsFunctions): Promise<INodePropertyOptions[]> {
+				const fields = await fetchQueryFields(this, 'lead.list');
+				return filterLeadFieldsByCategory(fields, 'leads')
+					.filter((field) => field.key)
+					.map((field) => ({
+						name: field.label ?? field.key ?? '',
+						value: field.key ?? '',
+						description: field.type ? `Type: ${field.type}` : undefined,
+					}));
+			},
+			async getLeadCustomFilterFields(this: ILoadOptionsFunctions): Promise<INodePropertyOptions[]> {
+				const fields = await fetchQueryFields(this, 'lead.list');
+				return filterLeadFieldsByCategory(fields, 'leadCustomFields')
+					.filter((field) => field.key)
+					.map((field) => ({
+						name: field.label ?? field.key ?? '',
+						value: field.key ?? '',
+						description: field.type ? `Type: ${field.type}` : undefined,
+					}));
+			},
+			async getLeadTaskFilterFields(this: ILoadOptionsFunctions): Promise<INodePropertyOptions[]> {
+				const fields = await fetchQueryFields(this, 'lead.list');
+				return filterLeadFieldsByCategory(fields, 'tasks')
+					.filter((field) => field.key)
+					.map((field) => ({
+						name: field.label ?? field.key ?? '',
+						value: field.key ?? '',
+						description: field.type ? `Type: ${field.type}` : undefined,
+					}));
+			},
+			async getLeadFilterCategories(this: ILoadOptionsFunctions): Promise<INodePropertyOptions[]> {
+				const fields = await fetchQueryFields(this, 'lead.list');
+				const available = getAvailableLeadFilterCategories(fields);
+				const labelMap: Record<LeadFilterCategory, string> = {
+					general: 'General Filters',
+					leads: 'Leads',
+					leadCustomFields: 'Lead Custom Fields',
+					tasks: 'Task',
+				};
+				return available.map((category) => ({
+					name: labelMap[category],
+					value: category,
+				}));
 			},
 			async getTaskFilterFields(this: ILoadOptionsFunctions): Promise<INodePropertyOptions[]> {
 				const fields = await fetchQueryFields(this, 'task.list');
@@ -2119,15 +2325,14 @@ export class AdhubApp implements INodeType {
 			async getLeadFilterOperators(this: ILoadOptionsFunctions): Promise<INodePropertyOptions[]> {
 				const emptyOption = { name: 'Select', value: '' };
 				const fields = await fetchQueryFields(this, 'lead.list');
-				const candidateKeys = [
-					readFixedCollectionRuleParam(this, 'leadListFilterRules', 'field'),
-					readCurrentStringParam(this, 'field'),
-				].filter((key) => key.length > 0);
+				const category = getLeadFilterCategory(this);
+				const scopedFields = filterLeadFieldsByCategory(fields, category);
+				const candidateKeys = [readLeadRuleFieldKey(this)].filter((key) => key.length > 0);
 				const match = candidateKeys
-					.map((key) => findQueryField(fields, key))
+					.map((key) => findQueryField(scopedFields, key))
 					.find((field): field is QueryField => field !== undefined);
 				if (!match) {
-					return [emptyOption, ...mapScopedOperatorOptions(fields)];
+					return [emptyOption, ...mapScopedOperatorOptions(scopedFields)];
 				}
 				const operators = mapOptions(match?.operators ?? []);
 				return [emptyOption, ...operators];
@@ -2151,11 +2356,13 @@ export class AdhubApp implements INodeType {
 			async getLeadFilterFieldOptions(
 				this: ILoadOptionsFunctions,
 			): Promise<INodePropertyOptions[]> {
-				const fieldKey = readCurrentStringParam(this, 'field');
+				const fieldKey = readLeadRuleFieldKey(this);
 				const emptyOption = { name: 'Select', value: '' };
 				if (!fieldKey) return [emptyOption];
 				const fields = await fetchQueryFields(this, 'lead.list');
-				const match = findQueryField(fields, fieldKey);
+				const category = getLeadFilterCategory(this);
+				const scopedFields = filterLeadFieldsByCategory(fields, category);
+				const match = findQueryField(scopedFields, fieldKey);
 				const options = (match?.options ?? []).map((opt) => ({
 					name: opt.label ?? opt.value ?? '',
 					value: opt.value ?? '',
@@ -2165,15 +2372,14 @@ export class AdhubApp implements INodeType {
 			async getLeadFilterValues(this: ILoadOptionsFunctions): Promise<INodePropertyOptions[]> {
 				const emptyOption = { name: 'Select', value: '' };
 				const fields = await fetchQueryFields(this, 'lead.list');
-				const candidateKeys = [
-					readFixedCollectionRuleParam(this, 'leadListFilterRules', 'field'),
-					readCurrentStringParam(this, 'field'),
-				].filter((key) => key.length > 0);
+				const category = getLeadFilterCategory(this);
+				const scopedFields = filterLeadFieldsByCategory(fields, category);
+				const candidateKeys = [readLeadRuleFieldKey(this)].filter((key) => key.length > 0);
 				const match = candidateKeys
-					.map((key) => findQueryField(fields, key))
+					.map((key) => findQueryField(scopedFields, key))
 					.find((field): field is QueryField => field !== undefined);
 				if (!match) {
-					return [emptyOption, ...mapScopedFieldValueOptions(fields)];
+					return [emptyOption, ...mapScopedFieldValueOptions(scopedFields)];
 				}
 				return [emptyOption, ...mapFieldValueOptions(match)];
 			},

@@ -147,7 +147,12 @@ async function handleLeads(
 	const leadListFilterMode = ctx.getNodeParameter('leadListFilterMode', itemIndex, 'and') as string;
 	const leadListFilterRulesParam = ctx.getNodeParameter('leadListFilterRules', itemIndex, {}) as {
 		values?: Array<{
+			category?: string;
 			field?: string;
+			fieldGeneral?: string;
+			fieldLeads?: string;
+			fieldLeadCustomFields?: string;
+			fieldTasks?: string;
 			operator?: string;
 			value?: string;
 			valueText?: string;
@@ -319,9 +324,24 @@ async function handleLeads(
 			if (leadListSortBy) listBody.sort_by = leadListSortBy;
 			if (leadListSortDir) listBody.sort_dir = leadListSortDir;
 			const queryFields = await fetchQueryFields(ctx, apiConfig, 'lead.list');
+			const resolveLeadFilterField = (rule: {
+				field?: string;
+				fieldGeneral?: string;
+				fieldLeads?: string;
+				fieldLeadCustomFields?: string;
+				fieldTasks?: string;
+			}): string =>
+				(rule.fieldGeneral ??
+					rule.fieldLeads ??
+					rule.fieldLeadCustomFields ??
+					rule.fieldTasks ??
+					rule.field ??
+					'')
+					.toString()
+					.trim();
 			const filterRules = (leadListFilterRulesParam?.values ?? [])
 				.map((rule) => ({
-					field: (rule?.field ?? '').toString().trim(),
+					field: resolveLeadFilterField(rule ?? {}),
 					operator: (rule?.operator ?? '').toString().trim(),
 					value: resolveRuleValue(
 						rule ?? {},
