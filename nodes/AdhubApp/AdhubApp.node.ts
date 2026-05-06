@@ -10,7 +10,6 @@ import { NodeConnectionTypes, NodeOperationError } from 'n8n-workflow';
 
 import {
 	type AdhubAppCredentials,
-	type ApiConfig,
 	buildRequestOptions,
 	JsonRecord,
 } from './helpers';
@@ -273,19 +272,12 @@ type LeadNoteOperation = Parameters<typeof handleLeadNotes>[2];
 type LeadCustomFieldOperation = Parameters<typeof handleLeadCustomFields>[2];
 type TaskOperation = Parameters<typeof handleTasks>[2];
 
-function getApiConfig(credentials: AdhubAppCredentials): ApiConfig {
-	return {
-		apiToken: credentials.apiToken,
-		ignoreSslIssues: credentials.ignoreSslIssues,
-	};
-}
-
 async function fetchQueryFields(
 	ctx: ILoadOptionsFunctions,
 	context: 'lead.list' | 'task.list',
 ): Promise<QueryField[]> {
 	const credentials = await ctx.getCredentials<AdhubAppCredentials>('adhubAppApi');
-	const apiConfig = getApiConfig(credentials);
+	const apiConfig = credentials;
 	const options = buildRequestOptions({
 		method: 'GET',
 		endpoint: '/query-builder/fields',
@@ -2423,7 +2415,7 @@ export class AdhubApp implements INodeType {
 			const operation = this.getNodeParameter('operation', itemIndex) as string;
 
 			const credentials = await this.getCredentials<AdhubAppCredentials>('adhubAppApi', itemIndex);
-			const apiConfig = getApiConfig(credentials);
+			const apiConfig = credentials;
 
 			try {
 				switch (resource) {
