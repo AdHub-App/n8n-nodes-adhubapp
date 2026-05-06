@@ -27,20 +27,12 @@ export class AdhubAppApi implements ICredentialType {
 	test: ICredentialTestRequest = {
 		request: {
 			method: 'POST',
-			url: '={{($credentials.serverUrl || "").replace(/\\/+$/, "")}}/api/v1/integrations/n8n/verify',
+			url: 'https://web.adhubapp.com/api/v1/integrations/n8n/verify',
 			skipSslCertificateValidation: '={{$credentials.ignoreSslIssues === true}}',
 		},
 	};
 
 	properties: INodeProperties[] = [
-		{
-			displayName: 'Server URL',
-			name: 'serverUrl',
-			type: 'string',
-			default: '',
-			required: true,
-			description: 'Base URL of your AdHub server',
-		},
 		{
 			displayName: 'n8n Integration Token',
 			name: 'apiToken',

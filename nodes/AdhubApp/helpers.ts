@@ -4,19 +4,12 @@ type JsonRecord = IDataObject;
 
 interface AdhubAppCredentials {
 	apiToken: string;
-	serverUrl: string;
 	ignoreSslIssues: boolean;
 }
 
 type ApiConfig = AdhubAppCredentials;
 
-function normalizeServerUrl(serverUrl: string | undefined): string {
-	const value = serverUrl?.trim() || '';
-	if (!value) {
-		throw new Error('Server URL is required. Please configure your AdHub credentials.');
-	}
-	return value.replace(/\/+$/, '');
-}
+const ADHUB_BASE_URL = 'https://web.adhubapp.com';
 
 function parseJson(value: string | undefined, fieldName: string): JsonRecord {
 	if (!value) return {};
@@ -44,7 +37,7 @@ function buildRequestOptions(config: {
 
 	const options: IHttpRequestOptions = {
 		method: config.method,
-		url: `${normalizeServerUrl(config.apiConfig.serverUrl)}/api/v1${config.endpoint}`,
+		url: `${ADHUB_BASE_URL}/api/v1${config.endpoint}`,
 		qs: config.qs ?? {},
 		headers,
 		json: true,
@@ -66,6 +59,5 @@ export {
 	type ApiConfig,
 	JsonRecord,
 	buildRequestOptions,
-	normalizeServerUrl,
 	parseJson,
 };

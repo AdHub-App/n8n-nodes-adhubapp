@@ -276,7 +276,6 @@ type TaskOperation = Parameters<typeof handleTasks>[2];
 function getApiConfig(credentials: AdhubAppCredentials): ApiConfig {
 	return {
 		apiToken: credentials.apiToken,
-		serverUrl: credentials.serverUrl,
 		ignoreSslIssues: credentials.ignoreSslIssues,
 	};
 }
