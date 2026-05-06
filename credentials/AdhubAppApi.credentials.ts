@@ -3,7 +3,7 @@ import { LoggerProxy } from 'n8n-workflow';
 
 export class AdhubAppApi implements ICredentialType {
 	name = 'adhubAppApi';
-	displayName = 'Adhub App API';
+	displayName = 'AdHub App API';
 	documentationUrl = 'https://docs.n8n.io/integrations/creating-nodes/';
 	icon: Icon = 'file:adhubapp.svg';
 

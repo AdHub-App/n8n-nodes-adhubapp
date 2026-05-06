@@ -1,6 +1,6 @@
 # Lead List Filtering Guide
 
-This guide explains how to use the query builder fields API to filter leads in the Adhub App n8n node.
+This guide explains how to use the query builder fields API to filter leads in the AdHub App n8n node.
 
 ## Overview
 

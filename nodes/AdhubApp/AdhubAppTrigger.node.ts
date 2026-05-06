@@ -23,14 +23,14 @@ const SIGNATURE_HEADER_NAME = 'X-AdHub-Signature';
 
 export class AdhubAppTrigger implements INodeType {
 	description: INodeTypeDescription = {
-		displayName: 'Adhub App Trigger',
+		displayName: 'AdHub App Trigger',
 		name: 'adhubAppTrigger',
 		group: ['trigger'],
 		version: 1,
 		subtitle: 'Webhook',
 		description: 'Triggers workflows when AdHub sends subscribed webhook events',
 		defaults: {
-			name: 'Adhub App Trigger',
+			name: 'AdHub App Trigger',
 		},
 		icon: 'file:adhubapp.svg',
 		usableAsTool: true,

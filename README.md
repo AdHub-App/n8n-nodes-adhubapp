@@ -1,4 +1,4 @@
-# Adhub App n8n Node
+# AdHub App n8n Node
 
 An n8n community node for managing AdHub leads, tasks, lead sources, lead statuses, lead tags, activities, and custom fields.
 
@@ -45,13 +45,12 @@ npm run dev:server
 
 ## Credentials
 
-Create credentials named `Adhub App API` in n8n and provide:
+Create credentials named `AdHub App API` in n8n and provide:
 
-- `Server URL`: your AdHub host
 - `n8n Integration Token`: the one-time token generated from `Settings -> Integrations -> n8n`
 - `Ignore SSL Issues`: optional for local or test environments with an incomplete TLS certificate chain
 
-When you test the credential, n8n verifies the token with `POST /api/v1/integrations/n8n/verify`.
+When you test the credential, n8n verifies the token against `https://web.adhubapp.com/api/v1/integrations/n8n/verify`.
 
 Recommended setup flow:
 

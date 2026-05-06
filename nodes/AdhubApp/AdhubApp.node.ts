@@ -320,14 +320,14 @@ async function fetchQueryFields(
 
 export class AdhubApp implements INodeType {
 	description: INodeTypeDescription = {
-		displayName: 'Adhub App',
+		displayName: 'AdHub App',
 		name: 'adhubApp',
 		group: ['output'],
 		version: 1,
 		subtitle: 'API v1',
-		description: 'Manage Adhub leads, activities, sources, statuses, tags, and custom fields',
+		description: 'Manage AdHub leads, activities, sources, statuses, tags, and custom fields',
 		defaults: {
-			name: 'Adhub App',
+			name: 'AdHub App',
 		},
 		icon: 'file:adhubapp.svg',
 		inputs: [NodeConnectionTypes.Main],
