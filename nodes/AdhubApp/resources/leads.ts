@@ -63,12 +63,9 @@ async function handleLeads(
 	const leadTagIdsParam = ctx.getNodeParameter('leadTagIds', itemIndex, {}) as {
 		values?: Array<{ value?: string }>;
 	};
-	const leadCompany = ctx.getNodeParameter('leadCompany', itemIndex, '') as string;
-	const leadJobTitle = ctx.getNodeParameter('leadJobTitle', itemIndex, '') as string;
-	const leadServiceInterest = ctx.getNodeParameter('leadServiceInterest', itemIndex, '') as string;
-	const leadMonthlyBudget = ctx.getNodeParameter('leadMonthlyBudget', itemIndex, '') as string;
-	const leadTimeline = ctx.getNodeParameter('leadTimeline', itemIndex, '') as string;
-	const leadInternalNotes = ctx.getNodeParameter('leadInternalNotes', itemIndex, '') as string;
+	const leadCustomFieldValuesParam = ctx.getNodeParameter('leadCustomFieldValues', itemIndex, {}) as {
+		values?: Array<{ key?: string; value?: string; valueOptions?: string }>;
+	};
 	const leadUpdatedAt = ctx.getNodeParameter('leadUpdatedAt', itemIndex, '') as string;
 	const leadIncludeEmpty = ctx.getNodeParameter('leadIncludeEmpty', itemIndex, false) as boolean;
 	const leadAdditionalFieldsRaw = ctx.getNodeParameter(
@@ -215,12 +212,6 @@ async function handleLeads(
 			if (leadStatusId) formBody.status_id = leadStatusId;
 			if (leadSourceId) formBody.source_id = leadSourceId;
 			if (leadOwnerId) formBody.owner_id = leadOwnerId;
-			if (leadCompany) formBody.company = leadCompany;
-			if (leadJobTitle) formBody.job_title = leadJobTitle;
-			if (leadServiceInterest) formBody.service_interest = leadServiceInterest;
-			if (leadMonthlyBudget) formBody.monthly_budget = leadMonthlyBudget;
-			if (leadTimeline) formBody.timeline = leadTimeline;
-			if (leadInternalNotes) formBody.internal_notes = leadInternalNotes;
 			if (leadIncludeEmpty) {
 				if (leadFirstName === '') formBody.first_name = '';
 				if (leadLastName === '') formBody.last_name = '';
@@ -229,12 +220,6 @@ async function handleLeads(
 				if (leadStatusId === '') formBody.status_id = '';
 				if (leadSourceId === '') formBody.source_id = '';
 				if (leadOwnerId === '') formBody.owner_id = '';
-				if (leadCompany === '') formBody.company = '';
-				if (leadJobTitle === '') formBody.job_title = '';
-				if (leadServiceInterest === '') formBody.service_interest = '';
-				if (leadMonthlyBudget === '') formBody.monthly_budget = '';
-				if (leadTimeline === '') formBody.timeline = '';
-				if (leadInternalNotes === '') formBody.internal_notes = '';
 			}
 			if (leadUpdatedAt) formBody.updated_at = leadUpdatedAt;
 
@@ -243,6 +228,19 @@ async function handleLeads(
 					.map((entry) => (entry?.value ?? '').toString().trim())
 					.filter((entry) => entry.length > 0);
 				if (tagIds.length) formBody.tag_ids = tagIds;
+			}
+
+			if (leadCustomFieldValuesParam?.values?.length) {
+				for (const entry of leadCustomFieldValuesParam.values) {
+					const key = (entry?.key ?? '').toString().trim();
+					if (!key) continue;
+					// valueOptions (select/radio/checkbox/multi-select picker) takes priority over
+					// the plain text value field.
+					const resolvedValue =
+						(entry?.valueOptions ?? '').toString().trim() ||
+						(entry?.value ?? '').toString();
+					formBody[key] = resolvedValue;
+				}
 			}
 
 			const extraFields = parseJson(leadAdditionalFieldsRaw, 'Additional Fields');
@@ -328,7 +326,7 @@ async function handleLeads(
 					filter.mode = normalizeFilterMode((filter.mode as string) ?? '');
 				}
 			}
-			body = listBody;
+				body = listBody;
 		}
 	}
 

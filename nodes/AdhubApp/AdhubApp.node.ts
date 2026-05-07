@@ -7,9 +7,9 @@ import type {
 	INodeTypeDescription,
 } from 'n8n-workflow';
 import { NodeConnectionTypes, NodeOperationError } from 'n8n-workflow';
-
 import {
 	type AdhubAppCredentials,
+	buildRequestOptions,
 	fetchQueryFields,
 } from './helpers';
 import { handleLeadSources } from './resources/leadSources';
@@ -20,7 +20,6 @@ import { handleLeadCustomFields } from './resources/leadCustomFields';
 import { handleLeadNotes } from './resources/leadNotes';
 import { handleLeadTags } from './resources/leadTags';
 import { handleTasks } from './resources/tasks';
-
 type QueryField = {
 	key?: string;
 	label?: string;
@@ -28,9 +27,7 @@ type QueryField = {
 	operators?: string[];
 	options?: Array<{ value?: string; label?: string }>;
 };
-
 type LeadFilterCategory = 'general' | 'leads' | 'leadCustomFields' | 'tasks';
-
 const VALUE_LESS_FILTER_OPERATORS = [
 	'Is Empty',
 	'Is Not Empty',
@@ -42,7 +39,6 @@ const VALUE_LESS_FILTER_OPERATORS = [
 	'Last Month',
 	'This Year',
 ];
-
 function readCurrentStringParam(
 	ctx: ILoadOptionsFunctions,
 	parameterName: string,
@@ -61,7 +57,6 @@ function readCurrentStringParam(
 			}
 			return '';
 		}
-
 		const record = value as Record<string, unknown>;
 		const directCandidates = [record.value, record.name, record.label];
 		for (const candidate of directCandidates) {
@@ -70,7 +65,6 @@ function readCurrentStringParam(
 		}
 		return '';
 	};
-
 	const candidates = [
 		parameterName,
 		`values.${parameterName}`,
@@ -79,7 +73,6 @@ function readCurrentStringParam(
 		`leadListFilterRules.values.${parameterName}`,
 		`taskListFilterRules.values.${parameterName}`,
 	];
-
 	for (const candidate of candidates) {
 		try {
 			const value = ctx.getCurrentNodeParameter(candidate);
@@ -89,7 +82,6 @@ function readCurrentStringParam(
 			// Ignore lookup misses and continue with the next candidate.
 		}
 	}
-
 	const searchNested = (value: unknown, depth = 0): string => {
 		if (depth > 6) return '';
 		const direct = extractString(value);
@@ -104,7 +96,6 @@ function readCurrentStringParam(
 			}
 			return '';
 		}
-
 		const record = value as Record<string, unknown>;
 		const parameterValue = record[parameterName];
 		const parameterMatch = extractString(parameterValue);
@@ -117,10 +108,8 @@ function readCurrentStringParam(
 		}
 		return '';
 	};
-
 	return searchNested(ctx.getCurrentNodeParameters());
 }
-
 function getLeadFilterCategory(ctx: ILoadOptionsFunctions): LeadFilterCategory {
 	const rawCategory = (
 		readCurrentStringParam(ctx, 'category')
@@ -135,7 +124,6 @@ function getLeadFilterCategory(ctx: ILoadOptionsFunctions): LeadFilterCategory {
 			return 'leads';
 	}
 }
-
 function readLeadRuleFieldKey(ctx: ILoadOptionsFunctions): string {
 	const candidateKeys = [
 		readCurrentStringParam(ctx, 'fieldGeneral'),
@@ -151,22 +139,18 @@ function readLeadRuleFieldKey(ctx: ILoadOptionsFunctions): string {
 	].filter((key) => key.length > 0);
 	return candidateKeys[0] ?? '';
 }
-
 function isTaskFieldKey(fieldKey: string): boolean {
 	const key = fieldKey.trim().toLowerCase();
 	return key.startsWith('task');
 }
-
 function isLeadCustomFieldKey(fieldKey: string): boolean {
 	const key = fieldKey.trim().toLowerCase();
 	return key.startsWith('cf_');
 }
-
 function isGeneralLeadFieldKey(fieldKey: string): boolean {
 	const key = fieldKey.trim().toLowerCase();
 	return key === 'lead.tag' || key === 'lead.segment';
 }
-
 function filterLeadFieldsByCategory(
 	fields: QueryField[],
 	category: LeadFilterCategory,
@@ -187,12 +171,10 @@ function filterLeadFieldsByCategory(
 		}
 	});
 }
-
 function getAvailableLeadFilterCategories(fields: QueryField[]): LeadFilterCategory[] {
 	const categories: LeadFilterCategory[] = ['general', 'leads', 'leadCustomFields', 'tasks'];
 	return categories.filter((category) => filterLeadFieldsByCategory(fields, category).length > 0);
 }
-
 function findQueryField(fields: QueryField[], fieldKey: string): QueryField | undefined {
 	const normalized = fieldKey.toString().trim().toLowerCase();
 	return (
@@ -201,11 +183,9 @@ function findQueryField(fields: QueryField[], fieldKey: string): QueryField | un
 		fields.find((field) => (field.label ?? '').toString().trim().toLowerCase() === normalized)
 	);
 }
-
 function mapOptions(values: string[]): INodePropertyOptions[] {
 	return values.map((value) => ({ name: value, value }));
 }
-
 function mapFieldValueOptions(field?: QueryField): INodePropertyOptions[] {
 	const options = Array.isArray(field?.options) ? field.options : [];
 	return options
@@ -215,7 +195,6 @@ function mapFieldValueOptions(field?: QueryField): INodePropertyOptions[] {
 			value: option.value ?? '',
 		}));
 }
-
 function mapScopedOperatorOptions(fields: QueryField[]): INodePropertyOptions[] {
 	const operators = new Set<string>();
 	for (const field of fields) {
@@ -227,10 +206,8 @@ function mapScopedOperatorOptions(fields: QueryField[]): INodePropertyOptions[] 
 	}
 	return Array.from(operators).map((operator) => ({ name: operator, value: operator }));
 }
-
 function mapScopedFieldValueOptions(fields: QueryField[]): INodePropertyOptions[] {
 	const options = new Map<string, INodePropertyOptions>();
-
 	for (const field of fields) {
 		for (const option of field.options ?? []) {
 			const value = (option.value ?? '').toString().trim();
@@ -241,10 +218,8 @@ function mapScopedFieldValueOptions(fields: QueryField[]): INodePropertyOptions[
 			});
 		}
 	}
-
 	return Array.from(options.values());
 }
-
 function readFixedCollectionRuleParam(
 	ctx: ILoadOptionsFunctions,
 	collectionName: string,
@@ -261,8 +236,6 @@ function readFixedCollectionRuleParam(
 	}
 	return '';
 }
-
-
 type LeadSourceOperation = Parameters<typeof handleLeadSources>[2];
 type LeadStatusOperation = Parameters<typeof handleLeadStatuses>[2];
 type LeadTagOperation = Parameters<typeof handleLeadTags>[2];
@@ -271,7 +244,6 @@ type LeadActivityOperation = Parameters<typeof handleLeadActivities>[2];
 type LeadNoteOperation = Parameters<typeof handleLeadNotes>[2];
 type LeadCustomFieldOperation = Parameters<typeof handleLeadCustomFields>[2];
 type TaskOperation = Parameters<typeof handleTasks>[2];
-
 async function loadQueryFields(
 	ctx: ILoadOptionsFunctions,
 	context: 'lead.list' | 'task.list',
@@ -279,7 +251,6 @@ async function loadQueryFields(
 	const credentials = await ctx.getCredentials<AdhubAppCredentials>('adhubAppApi');
 	return fetchQueryFields(ctx, credentials, context) as Promise<QueryField[]>;
 }
-
 export class AdhubApp implements INodeType {
 	description: INodeTypeDescription = {
 		displayName: 'AdHub App',
@@ -1537,10 +1508,13 @@ export class AdhubApp implements INodeType {
 				},
 			},
 			{
-				displayName: 'Status ID',
+				displayName: 'Status Name or ID',
 				name: 'leadStatusId',
-				type: 'string',
+				type: 'options',
 				default: '',
+				typeOptions: {
+					loadOptionsMethod: 'getLeadStatusOptions',
+				},
 				displayOptions: {
 					show: {
 						resource: ['leads'],
@@ -1548,12 +1522,17 @@ export class AdhubApp implements INodeType {
 						leadBodyType: ['form'],
 					},
 				},
+				description:
+					'Choose from the list, or specify an ID using an <a href="https://docs.n8n.io/code/expressions/">expression</a>',
 			},
 			{
-				displayName: 'Source ID',
+				displayName: 'Source Name or ID',
 				name: 'leadSourceId',
-				type: 'string',
+				type: 'options',
 				default: '',
+				typeOptions: {
+					loadOptionsMethod: 'getLeadSourceOptions',
+				},
 				displayOptions: {
 					show: {
 						resource: ['leads'],
@@ -1561,12 +1540,17 @@ export class AdhubApp implements INodeType {
 						leadBodyType: ['form'],
 					},
 				},
+				description:
+					'Choose from the list, or specify an ID using an <a href="https://docs.n8n.io/code/expressions/">expression</a>',
 			},
 			{
-				displayName: 'Owner ID',
+				displayName: 'Owner Name or ID',
 				name: 'leadOwnerId',
-				type: 'string',
+				type: 'options',
 				default: '',
+				typeOptions: {
+					loadOptionsMethod: 'getLeadOwnerOptions',
+				},
 				displayOptions: {
 					show: {
 						resource: ['leads'],
@@ -1574,6 +1558,8 @@ export class AdhubApp implements INodeType {
 						leadBodyType: ['form'],
 					},
 				},
+				description:
+					'Choose from the list, or specify an ID using an <a href="https://docs.n8n.io/code/expressions/">expression</a>',
 			},
 			{
 				displayName: 'Tag IDs',
@@ -1590,10 +1576,15 @@ export class AdhubApp implements INodeType {
 						displayName: 'Tag',
 						values: [
 							{
-								displayName: 'Tag ID',
+								displayName: 'Tag Name or ID',
 								name: 'value',
-								type: 'string',
+								type: 'options',
 								default: '',
+								typeOptions: {
+									loadOptionsMethod: 'getLeadTagOptions',
+								},
+								description:
+									'Choose from the list, or specify an ID using an <a href="https://docs.n8n.io/code/expressions/">expression</a>',
 							},
 						],
 					},
@@ -1608,10 +1599,58 @@ export class AdhubApp implements INodeType {
 				description: 'Tags to assign to the lead',
 			},
 			{
-				displayName: 'Company',
-				name: 'leadCompany',
-				type: 'string',
-				default: '',
+				displayName: 'Custom Fields',
+				name: 'leadCustomFieldValues',
+				type: 'fixedCollection',
+				typeOptions: {
+					multipleValues: true,
+				},
+				default: {},
+				placeholder: 'Add Custom Field',
+				options: [
+					{
+						name: 'values',
+						displayName: 'Custom Field',
+						values: [
+							{
+								displayName: 'Field Name or ID',
+								name: 'key',
+								type: 'options',
+								default: '',
+								typeOptions: {
+									loadOptionsMethod: 'getLeadCustomFieldOptions',
+								},
+								description:
+									'Choose from the list, or specify a key using an <a href="https://docs.n8n.io/code/expressions/">expression</a>',
+							},
+							{
+								displayName: 'Value',
+								name: 'value',
+								type: 'string',
+								default: '',
+								description:
+									'Use for text, date, number, email, phone, and textarea fields. For select / radio / checkbox / multi-select fields use the option picker below.',
+							},
+							{
+								displayName: 'Option Value',
+								name: 'valueOptions',
+								type: 'options',
+								default: '',
+								typeOptions: {
+									loadOptionsMethod: 'getLeadCustomFieldValueOptions',
+									loadOptionsDependsOn: [
+										'key',
+										'values.key',
+										'leadCustomFieldValues',
+										'leadCustomFieldValues.values.key',
+									],
+								},
+								description:
+									'For select, radio, checkbox, and multi-select fields. Choose from the list, or specify a value using an <a href="https://docs.n8n.io/code/expressions/">expression</a>. Leave blank for text fields.',
+							},
+						],
+					},
+				],
 				displayOptions: {
 					show: {
 						resource: ['leads'],
@@ -1619,71 +1658,7 @@ export class AdhubApp implements INodeType {
 						leadBodyType: ['form'],
 					},
 				},
-			},
-			{
-				displayName: 'Job Title',
-				name: 'leadJobTitle',
-				type: 'string',
-				default: '',
-				displayOptions: {
-					show: {
-						resource: ['leads'],
-						operation: ['createLead', 'updateLead'],
-						leadBodyType: ['form'],
-					},
-				},
-			},
-			{
-				displayName: 'Service Interest',
-				name: 'leadServiceInterest',
-				type: 'string',
-				default: '',
-				displayOptions: {
-					show: {
-						resource: ['leads'],
-						operation: ['createLead', 'updateLead'],
-						leadBodyType: ['form'],
-					},
-				},
-			},
-			{
-				displayName: 'Monthly Budget',
-				name: 'leadMonthlyBudget',
-				type: 'string',
-				default: '',
-				displayOptions: {
-					show: {
-						resource: ['leads'],
-						operation: ['createLead', 'updateLead'],
-						leadBodyType: ['form'],
-					},
-				},
-			},
-			{
-				displayName: 'Timeline',
-				name: 'leadTimeline',
-				type: 'string',
-				default: '',
-				displayOptions: {
-					show: {
-						resource: ['leads'],
-						operation: ['createLead', 'updateLead'],
-						leadBodyType: ['form'],
-					},
-				},
-			},
-			{
-				displayName: 'Internal Notes',
-				name: 'leadInternalNotes',
-				type: 'string',
-				default: '',
-				displayOptions: {
-					show: {
-						resource: ['leads'],
-						operation: ['createLead', 'updateLead'],
-						leadBodyType: ['form'],
-					},
-				},
+				description: 'Custom field values to assign to the lead',
 			},
 			{
 				displayName: 'Updated At',
@@ -1719,8 +1694,8 @@ export class AdhubApp implements INodeType {
 				name: 'leadAdditionalFields',
 				type: 'string',
 				default: '',
-				placeholder: '{"company":"Acme","job_title":"Owner"}',
-				description: 'Compatibility fields not covered by the OpenAPI spec, sent as a JSON object',
+				placeholder: '{"undocumented_field":"value"}',
+				description: 'Fields not covered by the form above, sent as a raw JSON object. Use Custom Fields above for known custom fields.',
 				displayOptions: {
 					show: {
 						resource: ['leads'],
@@ -2204,9 +2179,162 @@ export class AdhubApp implements INodeType {
 			},
 		],
 	};
-
 	methods = {
 		loadOptions: {
+			async getLeadStatusOptions(
+				this: ILoadOptionsFunctions,
+			): Promise<INodePropertyOptions[]> {
+				const credentials = await this.getCredentials<AdhubAppCredentials>('adhubAppApi');
+				const reqOptions = buildRequestOptions({
+					method: 'GET',
+					endpoint: '/lead-statuses',
+					apiConfig: credentials,
+				});
+				const response = (await this.helpers.request(reqOptions)) as
+					| { data?: Array<Record<string, unknown>> }
+					| Array<Record<string, unknown>>;
+				const items = Array.isArray(response) ? response : (response?.data ?? []);
+				return [
+					{ name: '(None)', value: '' },
+					...items
+						.filter((item) => (item.id ?? '').toString().trim().length > 0)
+						.map((item) => ({
+							name: (item.name ?? item.id ?? '').toString(),
+							value: (item.id ?? '').toString(),
+						})),
+				];
+			},
+			async getLeadSourceOptions(
+				this: ILoadOptionsFunctions,
+			): Promise<INodePropertyOptions[]> {
+				const credentials = await this.getCredentials<AdhubAppCredentials>('adhubAppApi');
+				const reqOptions = buildRequestOptions({
+					method: 'GET',
+					endpoint: '/lead-sources',
+					apiConfig: credentials,
+				});
+				const response = (await this.helpers.request(reqOptions)) as
+					| { data?: Array<Record<string, unknown>> }
+					| Array<Record<string, unknown>>;
+				const items = Array.isArray(response) ? response : (response?.data ?? []);
+				return [
+					{ name: '(None)', value: '' },
+					...items
+						.filter((item) => (item.id ?? '').toString().trim().length > 0)
+						.map((item) => ({
+							name: (item.name ?? item.id ?? '').toString(),
+							value: (item.id ?? '').toString(),
+						})),
+				];
+			},
+			async getLeadOwnerOptions(
+				this: ILoadOptionsFunctions,
+			): Promise<INodePropertyOptions[]> {
+				const credentials = await this.getCredentials<AdhubAppCredentials>('adhubAppApi');
+				const reqOptions = buildRequestOptions({
+					method: 'GET',
+					endpoint: '/users',
+					apiConfig: credentials,
+				});
+				const response = (await this.helpers.request(reqOptions)) as
+					| { data?: Array<{ id?: string; name?: string; email?: string; role?: string }> }
+					| Array<{ id?: string; name?: string; email?: string; role?: string }>;
+				const items = Array.isArray(response) ? response : (response?.data ?? []);
+				return [
+					{ name: '(None)', value: '' },
+					...items
+						.filter((item) => (item.id ?? '').toString().trim().length > 0)
+						.map((item) => ({
+							name: (item.name ?? item.email ?? item.id ?? '').toString(),
+							value: (item.id ?? '').toString(),
+						})),
+				];
+			},
+			async getLeadTagOptions(
+				this: ILoadOptionsFunctions,
+			): Promise<INodePropertyOptions[]> {
+				const credentials = await this.getCredentials<AdhubAppCredentials>('adhubAppApi');
+				const reqOptions = buildRequestOptions({
+					method: 'GET',
+					endpoint: '/lead-tags',
+					apiConfig: credentials,
+				});
+				const response = (await this.helpers.request(reqOptions)) as
+					| { data?: Array<Record<string, unknown>> }
+					| Array<Record<string, unknown>>;
+				const items = Array.isArray(response) ? response : (response?.data ?? []);
+				return items
+					.filter((item) => (item.id ?? '').toString().trim().length > 0)
+					.map((item) => ({
+						name: (item.name ?? item.id ?? '').toString(),
+						value: (item.id ?? '').toString(),
+					}));
+			},
+			async getLeadCustomFieldOptions(
+				this: ILoadOptionsFunctions,
+			): Promise<INodePropertyOptions[]> {
+				const credentials = await this.getCredentials<AdhubAppCredentials>('adhubAppApi');
+				const reqOptions = buildRequestOptions({
+					method: 'GET',
+					endpoint: '/lead-custom-fields',
+					apiConfig: credentials,
+				});
+				const response = (await this.helpers.request(reqOptions)) as
+					| { data?: Array<{ key?: string; label?: string }> }
+					| Array<{ key?: string; label?: string }>;
+				const fields = Array.isArray(response) ? response : (response?.data ?? []);
+				return fields
+					.filter((field) => (field.key ?? '').toString().trim().length > 0)
+					.map((field) => ({
+						name: field.label ?? field.key ?? '',
+						value: field.key ?? '',
+					}));
+			},
+			async getLeadCustomFieldValueOptions(
+				this: ILoadOptionsFunctions,
+			): Promise<INodePropertyOptions[]> {
+				type CustomField = {
+					key?: string;
+					label?: string;
+					type?: string;
+					options?: string[];
+				};
+				const OPTION_TYPES = new Set(['select', 'multi_select', 'radio', 'checkbox']);
+				// Resolve the currently selected field key from the collection row.
+				const selectedKey = (
+					readCurrentStringParam(this, 'key') ||
+					readFixedCollectionRuleParam(this, 'leadCustomFieldValues', 'key')
+				).trim();
+				if (!selectedKey) {
+					return [{ name: 'Select a field first', value: '' }];
+				}
+				const credentials = await this.getCredentials<AdhubAppCredentials>('adhubAppApi');
+				const reqOptions = buildRequestOptions({
+					method: 'GET',
+					endpoint: '/lead-custom-fields',
+					apiConfig: credentials,
+				});
+				const response = (await this.helpers.request(reqOptions)) as
+					| { data?: CustomField[] }
+					| CustomField[];
+				const fields = (Array.isArray(response) ? response : (response?.data ?? [])) as CustomField[];
+				const field = fields.find(
+					(f) => (f.key ?? '').toString().trim() === selectedKey,
+				);
+				if (!field) {
+					return [{ name: '(field not found)', value: '' }];
+				}
+				const fieldType = (field.type ?? '').toString().trim().toLowerCase().replace(/\s+/g, '_');
+				if (!OPTION_TYPES.has(fieldType)) {
+					// Not a choice-type field — user should use the text Value field above.
+					return [{ name: `(${field.label ?? field.key} is a ${field.type ?? 'text'} field — use the Value field above)`, value: '' }];
+				}
+				const rawOptions = Array.isArray(field.options) ? field.options : [];
+				return rawOptions
+					.map((opt) => opt.toString().trim())
+					.filter((opt) => opt.length > 0)
+					.map((opt) => ({ name: opt, value: opt }));
+			},
 			async getLeadFilterFields(this: ILoadOptionsFunctions): Promise<INodePropertyOptions[]> {
 				const fields = await loadQueryFields(this, 'lead.list');
 				const category = getLeadFilterCategory(this);
@@ -2375,19 +2503,15 @@ export class AdhubApp implements INodeType {
 			},
 		},
 	};
-
 	async execute(this: IExecuteFunctions): Promise<INodeExecutionData[][]> {
 		const items = this.getInputData();
 		const returnData: INodeExecutionData[] = [];
-
 		// Fetch credentials once — not per item.
 		const credentials = await this.getCredentials<AdhubAppCredentials>('adhubAppApi');
 		const apiConfig = credentials;
-
 		for (let itemIndex = 0; itemIndex < items.length; itemIndex++) {
 			const resource = this.getNodeParameter('resource', itemIndex) as string;
 			const operation = this.getNodeParameter('operation', itemIndex) as string;
-
 			try {
 				switch (resource) {
 					case 'leadSources':
@@ -2459,7 +2583,6 @@ export class AdhubApp implements INodeType {
 				}
 			}
 		}
-
 		return [returnData];
 	}
 }
