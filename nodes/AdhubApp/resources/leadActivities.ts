@@ -1,7 +1,14 @@
 import type { IExecuteFunctions, INodeExecutionData, JsonObject } from 'n8n-workflow';
 import { NodeApiError, NodeOperationError } from 'n8n-workflow';
 
-import { type ApiConfig, buildRequestOptions, parseJson, JsonRecord } from '../helpers';
+import {
+	type ApiConfig,
+	buildRequestOptions,
+	executeAdhubRequest,
+	formatAdhubNodeResponse,
+	parseJson,
+	JsonRecord,
+} from '../helpers';
 
 type LeadActivityOperations =
 	| 'listLeadActivityTypes'
@@ -75,7 +82,7 @@ async function handleLeadActivities(
 			if (activityOccurredAt) formBody.occurred_at = activityOccurredAt;
 			body = formBody;
 		} else {
-			body = parseJson(activityBodyRaw, 'Body');
+			body = parseJson(activityBodyRaw, 'Body', ctx.getNode(), itemIndex) as JsonRecord;
 		}
 	}
 
@@ -88,8 +95,13 @@ async function handleLeadActivities(
 	});
 
 	try {
-		const response = await ctx.helpers.request(options);
-		return { json: response };
+		const response = await executeAdhubRequest(
+			ctx.helpers.httpRequest,
+			options,
+			ctx.getNode(),
+			itemIndex,
+		);
+		return { json: formatAdhubNodeResponse(response) as JsonObject };
 	} catch (error) {
 		throw new NodeApiError(ctx.getNode(), error as unknown as JsonObject, { itemIndex });
 	}

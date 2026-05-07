@@ -1,7 +1,14 @@
 import type { IExecuteFunctions, INodeExecutionData, JsonObject } from 'n8n-workflow';
 import { NodeApiError, NodeOperationError } from 'n8n-workflow';
 
-import { type ApiConfig, buildRequestOptions, parseJson, JsonRecord } from '../helpers';
+import {
+	type ApiConfig,
+	buildRequestOptions,
+	executeAdhubRequest,
+	formatAdhubNodeResponse,
+	parseJson,
+	JsonRecord,
+} from '../helpers';
 
 type LeadTagOperations =
 	| 'listLeadTags'
@@ -66,7 +73,7 @@ async function handleLeadTags(
 			if (tagColor) formBody.color = tagColor;
 			body = formBody;
 		} else {
-			body = parseJson(bodyRaw, 'Body');
+			body = parseJson(bodyRaw, 'Body', ctx.getNode(), itemIndex) as JsonRecord;
 		}
 	}
 
@@ -78,8 +85,13 @@ async function handleLeadTags(
 	});
 
 	try {
-		const response = await ctx.helpers.request(options);
-		return { json: response };
+		const response = await executeAdhubRequest(
+			ctx.helpers.httpRequest,
+			options,
+			ctx.getNode(),
+			itemIndex,
+		);
+		return { json: formatAdhubNodeResponse(response) as JsonObject };
 	} catch (error) {
 		throw new NodeApiError(ctx.getNode(), error as unknown as JsonObject, { itemIndex });
 	}

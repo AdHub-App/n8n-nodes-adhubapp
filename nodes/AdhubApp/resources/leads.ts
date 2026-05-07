@@ -4,6 +4,8 @@ import { NodeApiError, NodeOperationError } from 'n8n-workflow';
 import {
 	type ApiConfig,
 	buildRequestOptions,
+	executeAdhubRequest,
+	formatAdhubNodeResponse,
 	parseJson,
 	fetchQueryFields,
 	resolveRuleValue,
@@ -11,7 +13,6 @@ import {
 } from '../helpers';
 
 type LeadOperations =
-	| 'listLeadQueryFields'
 	| 'listLeads'
 	| 'createLead'
 	| 'getLead'
@@ -31,12 +32,166 @@ async function handleLeads(
 	operation: LeadOperations,
 	apiConfig: ApiConfig,
 ): Promise<INodeExecutionData> {
+	type LeadCustomFieldMeta = {
+		id?: string;
+		name?: string;
+		key?: string;
+		label?: string;
+		rules?: unknown[];
+	};
 	const normalizeFilterMode = (mode: string): 'and' | 'or' => {
 		const normalized = (mode ?? '').toString().trim().toLowerCase();
 		return normalized === 'or' ? 'or' : 'and';
 	};
 	const normalizeOperator = (operator: string): string =>
 		(operator ?? '').toString().trim().toLowerCase();
+	const normalizeIdList = (entries: Array<{ value?: string }> = []): string[] =>
+		entries
+			.map((entry) => (entry?.value ?? '').toString().trim())
+			.filter((value) => value.length > 0);
+	const parseIdArray = (raw: string, label: string): string[] => {
+		const parsed = parseJson(raw, label, ctx.getNode(), itemIndex);
+		if (!Array.isArray(parsed)) {
+			throw new NodeOperationError(ctx.getNode(), `${label} must be a JSON array`, {
+				itemIndex,
+				description: 'Example: ["id-1","id-2"]',
+			});
+		}
+		return parsed
+			.map((value) => value?.toString().trim())
+			.filter((value): value is string => Boolean(value));
+	};
+	const hasRequiredRule = (rules: unknown): boolean => {
+		if (!Array.isArray(rules)) return false;
+		return rules.some((rule) => {
+			if (typeof rule === 'string') return rule.toLowerCase() === 'required';
+			if (!rule || typeof rule !== 'object') return false;
+			const record = rule as Record<string, unknown>;
+			return ['rule', 'name', 'type', 'value'].some(
+				(key) => (record[key] ?? '').toString().trim().toLowerCase() === 'required',
+			);
+		});
+	};
+	const fetchLeadCustomFieldMetadata = async (): Promise<LeadCustomFieldMeta[]> => {
+		const reqOptions = buildRequestOptions({
+			method: 'GET',
+			endpoint: '/lead-custom-fields',
+			apiConfig,
+		});
+		const response = (await executeAdhubRequest(
+			ctx.helpers.httpRequest,
+			reqOptions,
+			ctx.getNode(),
+			itemIndex,
+		)) as
+			| { data?: LeadCustomFieldMeta[] }
+			| LeadCustomFieldMeta[];
+		return Array.isArray(response) ? response : (response?.data ?? []);
+	};
+	const applyLeadCustomFieldValues = async (
+		target: JsonRecord,
+		fieldEntries: Array<{ key?: string; value?: string }>,
+		errorContext: string,
+	): Promise<void> => {
+		const normalizeLoose = (value: string): string =>
+			value.toLowerCase().replace(/[^a-z0-9]/g, '');
+		const fieldDefinitions = await fetchLeadCustomFieldMetadata();
+		for (const entry of fieldEntries) {
+			const key = (entry?.key ?? '').toString().trim();
+			if (!key) continue;
+			const normalizedKey = normalizeLoose(key);
+			const fieldDef = fieldDefinitions.find(
+				(field) => {
+					const candidates = [field.name, field.key, field.id, field.label]
+						.map((value) => (value ?? '').toString().trim())
+						.map((value) => [value.toLowerCase(), normalizeLoose(value)])
+						.flat()
+						.filter((value) => value.length > 0);
+					return candidates.includes(key.toLowerCase()) || candidates.includes(normalizedKey);
+				},
+			);
+			const isFieldRequired = hasRequiredRule(fieldDef?.rules);
+			const resolvedValue = (entry?.value ?? '').toString();
+			const isMissingValue = resolvedValue.toString().trim().length === 0;
+			if (isMissingValue && isFieldRequired) {
+				throw new NodeOperationError(
+					ctx.getNode(),
+					`Value is required for custom field "${fieldDef?.label ?? key}"`,
+					{
+						itemIndex,
+						description: `${errorContext}: provide a value for required custom fields`,
+					},
+				);
+			}
+			target[key] = resolvedValue;
+		}
+	};
+	const resolveLeadFilterField = (rule: {
+		field?: string;
+		fieldGeneral?: string;
+		fieldLeads?: string;
+		fieldLeadCustomFields?: string;
+		fieldTasks?: string;
+	}): string =>
+		(rule.fieldGeneral ??
+			rule.fieldLeads ??
+			rule.fieldLeadCustomFields ??
+			rule.fieldTasks ??
+			rule.field ??
+			'')
+			.toString()
+			.trim();
+	const buildLeadFilter = async (
+		filterMode: string,
+		filterRulesParam:
+			| {
+					values?: Array<{
+						field?: string;
+						fieldGeneral?: string;
+						fieldLeads?: string;
+						fieldLeadCustomFields?: string;
+						fieldTasks?: string;
+						operator?: string;
+						value?: string;
+						valueText?: string;
+						valueDate?: string;
+						valueSelect?: string;
+					}>;
+			  }
+			| undefined,
+	): Promise<JsonRecord | undefined> => {
+		const queryFields = await fetchQueryFields(ctx, apiConfig, 'lead.list');
+		const filterRules = (filterRulesParam?.values ?? [])
+			.map((rule) => ({
+				field: resolveLeadFilterField(rule ?? {}),
+				operator: (rule?.operator ?? '').toString().trim(),
+				value: resolveRuleValue(
+					rule ?? {},
+					queryFields.find((field) => field.key === (rule?.field ?? '').toString().trim()),
+				),
+			}))
+			.filter((rule) => rule.field.length > 0 && rule.operator.length > 0)
+			.map((rule) => {
+				if (noValueOperators.has(normalizeOperator(rule.operator))) {
+					return { field: rule.field, operator: rule.operator };
+				}
+				if (!rule.value.length) {
+					throw new NodeOperationError(
+						ctx.getNode(),
+						`Filter value is required for operator "${rule.operator}" on field "${rule.field}"`,
+						{ itemIndex, description: 'Provide a value or choose a valueless operator' },
+					);
+				}
+				return rule;
+			});
+		if (!filterRules.length) {
+			return undefined;
+		}
+		return {
+			mode: normalizeFilterMode(filterMode),
+			rules: filterRules,
+		};
+	};
 	const noValueOperators = new Set([
 		'is empty',
 		'is not empty',
@@ -50,7 +205,6 @@ async function handleLeads(
 	]);
 
 	const leadId = ctx.getNodeParameter('leadId', itemIndex, '') as string;
-	const queryContext = ctx.getNodeParameter('queryContext', itemIndex, '') as string;
 	const bodyRaw = ctx.getNodeParameter('body', itemIndex, '') as string;
 	const leadBodyType = ctx.getNodeParameter('leadBodyType', itemIndex, 'form') as string;
 	const leadFirstName = ctx.getNodeParameter('leadFirstName', itemIndex, '') as string;
@@ -64,7 +218,7 @@ async function handleLeads(
 		values?: Array<{ value?: string }>;
 	};
 	const leadCustomFieldValuesParam = ctx.getNodeParameter('leadCustomFieldValues', itemIndex, {}) as {
-		values?: Array<{ key?: string; value?: string; valueOptions?: string }>;
+		values?: Array<{ key?: string; value?: string }>;
 	};
 	const leadUpdatedAt = ctx.getNodeParameter('leadUpdatedAt', itemIndex, '') as string;
 	const leadIncludeEmpty = ctx.getNodeParameter('leadIncludeEmpty', itemIndex, false) as boolean;
@@ -98,6 +252,41 @@ async function handleLeads(
 			valueSelect?: string;
 		}>;
 	};
+	const bulkLeadBodyType = ctx.getNodeParameter('bulkLeadBodyType', itemIndex, 'form') as string;
+	const bulkLeadTargetType = ctx.getNodeParameter('bulkLeadTargetType', itemIndex, 'ids') as string;
+	const bulkLeadIdsRaw = ctx.getNodeParameter('bulkLeadIds', itemIndex, '[]') as string;
+	const bulkLeadFilterMode = ctx.getNodeParameter('bulkLeadFilterMode', itemIndex, 'and') as string;
+	const bulkLeadFilterRulesParam = ctx.getNodeParameter('bulkLeadFilterRules', itemIndex, {}) as {
+		values?: Array<{
+			field?: string;
+			fieldGeneral?: string;
+			fieldLeads?: string;
+			fieldLeadCustomFields?: string;
+			fieldTasks?: string;
+			operator?: string;
+			value?: string;
+			valueText?: string;
+			valueDate?: string;
+			valueSelect?: string;
+		}>;
+	};
+	const bulkLeadStatusId = ctx.getNodeParameter('bulkLeadStatusId', itemIndex, '') as string;
+	const bulkLeadSourceId = ctx.getNodeParameter('bulkLeadSourceId', itemIndex, '') as string;
+	const bulkLeadOwnerId = ctx.getNodeParameter('bulkLeadOwnerId', itemIndex, '') as string;
+	const bulkAddTagIdsParam = ctx.getNodeParameter('bulkAddTagIds', itemIndex, {}) as {
+		values?: Array<{ value?: string }>;
+	};
+	const bulkRemoveTagIdsParam = ctx.getNodeParameter('bulkRemoveTagIds', itemIndex, {}) as {
+		values?: Array<{ value?: string }>;
+	};
+	const bulkLeadCustomFieldValuesParam = ctx.getNodeParameter('bulkLeadCustomFieldValues', itemIndex, {}) as {
+		values?: Array<{ key?: string; value?: string }>;
+	};
+	const bulkUpdateCustomFieldsAdditionalFieldsRaw = ctx.getNodeParameter(
+		'bulkUpdateCustomFieldsAdditionalFields',
+		itemIndex,
+		'',
+	) as string;
 	const bulkCreateBodyRaw = ctx.getNodeParameter('bulkCreateBody', itemIndex, '') as string;
 	const bulkDeleteBodyRaw = ctx.getNodeParameter('bulkDeleteBody', itemIndex, '') as string;
 	const bulkUpdateFieldsBodyRaw = ctx.getNodeParameter(
@@ -119,11 +308,6 @@ async function handleLeads(
 	const qs: JsonRecord = {};
 
 	switch (operation) {
-		case 'listLeadQueryFields':
-			method = 'GET';
-			endpoint = '/query-builder/fields';
-			qs.context = queryContext;
-			break;
 		case 'listLeads':
 			method = 'POST';
 			endpoint = '/leads/list';
@@ -192,17 +376,27 @@ async function handleLeads(
 	let body;
 	if (includeBody) {
 		if (operation === 'bulkCreateLeads') {
-			body = parseJson(bulkCreateBodyRaw, 'Bulk Create Body');
+			body = parseJson(bulkCreateBodyRaw, 'Bulk Create Body', ctx.getNode(), itemIndex) as IDataObject;
 		} else if (operation === 'bulkDeleteLeads') {
-			body = parseJson(bulkDeleteBodyRaw, 'Bulk Delete Body');
+			body = parseJson(bulkDeleteBodyRaw, 'Bulk Delete Body', ctx.getNode(), itemIndex) as IDataObject;
 		} else if (operation === 'bulkUpdateLeadFields') {
-			body = parseJson(bulkUpdateFieldsBodyRaw, 'Bulk Update Fields Body');
+			body = parseJson(
+				bulkUpdateFieldsBodyRaw,
+				'Bulk Update Fields Body',
+				ctx.getNode(),
+				itemIndex,
+			) as IDataObject;
 		} else if (operation === 'bulkSyncLeadTags') {
-			body = parseJson(bulkSyncTagsBodyRaw, 'Bulk Sync Tags Body');
+			body = parseJson(bulkSyncTagsBodyRaw, 'Bulk Sync Tags Body', ctx.getNode(), itemIndex) as IDataObject;
 		} else if (operation === 'bulkUpdateLeadCustomFields') {
-			body = parseJson(bulkUpdateCustomFieldsBodyRaw, 'Bulk Update Custom Fields Body');
+			body = parseJson(
+				bulkUpdateCustomFieldsBodyRaw,
+				'Bulk Update Custom Fields Body',
+				ctx.getNode(),
+				itemIndex,
+			) as IDataObject;
 		} else if (operationsUsingJsonBody.has(operation)) {
-			body = parseJson(bodyRaw, 'Body');
+			body = parseJson(bodyRaw, 'Body', ctx.getNode(), itemIndex) as IDataObject;
 		} else if (leadBodyType === 'form') {
 			const formBody: JsonRecord = {};
 			if (leadFirstName) formBody.first_name = leadFirstName;
@@ -231,25 +425,84 @@ async function handleLeads(
 			}
 
 			if (leadCustomFieldValuesParam?.values?.length) {
-				for (const entry of leadCustomFieldValuesParam.values) {
-					const key = (entry?.key ?? '').toString().trim();
-					if (!key) continue;
-					// valueOptions (select/radio/checkbox/multi-select picker) takes priority over
-					// the plain text value field.
-					const resolvedValue =
-						(entry?.valueOptions ?? '').toString().trim() ||
-						(entry?.value ?? '').toString();
-					formBody[key] = resolvedValue;
-				}
+				await applyLeadCustomFieldValues(
+					formBody,
+					leadCustomFieldValuesParam.values,
+					'Lead custom fields',
+				);
 			}
 
-			const extraFields = parseJson(leadAdditionalFieldsRaw, 'Additional Fields');
+			const extraFields = parseJson(
+				leadAdditionalFieldsRaw,
+				'Additional Fields',
+				ctx.getNode(),
+				itemIndex,
+			) as IDataObject;
 			for (const [key, value] of Object.entries(extraFields)) {
 				if (formBody[key] === undefined) formBody[key] = value as IDataObject[keyof IDataObject];
 			}
 			body = formBody;
 		} else {
-			body = parseJson(bodyRaw, 'Body');
+			body = parseJson(bodyRaw, 'Body', ctx.getNode(), itemIndex) as IDataObject;
+		}
+	}
+	if (
+		operation === 'bulkDeleteLeads' ||
+		operation === 'bulkUpdateLeadFields' ||
+		operation === 'bulkSyncLeadTags' ||
+		operation === 'bulkUpdateLeadCustomFields'
+	) {
+		if (bulkLeadBodyType === 'form') {
+			const bulkBody: JsonRecord = {};
+			if (bulkLeadTargetType === 'ids') {
+				const leadIds = parseIdArray(bulkLeadIdsRaw, 'Lead IDs');
+				if (!leadIds.length) {
+					throw new NodeOperationError(ctx.getNode(), 'At least one Lead ID is required', {
+						itemIndex,
+						description: 'Provide Lead IDs or switch Target Type to Filter',
+					});
+				}
+				bulkBody.lead_ids = leadIds;
+			} else {
+				const filter = await buildLeadFilter(bulkLeadFilterMode, bulkLeadFilterRulesParam);
+				if (!filter) {
+					throw new NodeOperationError(ctx.getNode(), 'At least one filter rule is required', {
+						itemIndex,
+						description: 'Add filter rules or switch Target Type to IDs',
+					});
+				}
+				bulkBody.filter = filter;
+			}
+			if (operation === 'bulkUpdateLeadFields') {
+				if (bulkLeadStatusId) bulkBody.status_id = bulkLeadStatusId;
+				if (bulkLeadSourceId) bulkBody.source_id = bulkLeadSourceId;
+				if (bulkLeadOwnerId) bulkBody.owner_id = bulkLeadOwnerId;
+			}
+			if (operation === 'bulkSyncLeadTags') {
+				const addTagIds = normalizeIdList(bulkAddTagIdsParam?.values ?? []);
+				const removeTagIds = normalizeIdList(bulkRemoveTagIdsParam?.values ?? []);
+				if (addTagIds.length) bulkBody.add_tag_ids = addTagIds;
+				if (removeTagIds.length) bulkBody.remove_tag_ids = removeTagIds;
+			}
+			if (operation === 'bulkUpdateLeadCustomFields') {
+				if (bulkLeadCustomFieldValuesParam?.values?.length) {
+					await applyLeadCustomFieldValues(
+						bulkBody,
+						bulkLeadCustomFieldValuesParam.values,
+						'Bulk custom fields',
+					);
+				}
+				const extraFields = parseJson(
+					bulkUpdateCustomFieldsAdditionalFieldsRaw,
+					'Additional Custom Fields',
+					ctx.getNode(),
+					itemIndex,
+				) as IDataObject;
+				for (const [key, value] of Object.entries(extraFields)) {
+					if (bulkBody[key] === undefined) bulkBody[key] = value as IDataObject[keyof IDataObject];
+				}
+			}
+			body = bulkBody;
 		}
 	}
 
@@ -262,51 +515,8 @@ async function handleLeads(
 			if (leadListSearch) listBody.search = leadListSearch;
 			if (leadListSortBy) listBody.sort_by = leadListSortBy;
 			if (leadListSortDir) listBody.sort_dir = leadListSortDir;
-			const queryFields = await fetchQueryFields(ctx, apiConfig, 'lead.list');
-			const resolveLeadFilterField = (rule: {
-				field?: string;
-				fieldGeneral?: string;
-				fieldLeads?: string;
-				fieldLeadCustomFields?: string;
-				fieldTasks?: string;
-			}): string =>
-				(rule.fieldGeneral ??
-					rule.fieldLeads ??
-					rule.fieldLeadCustomFields ??
-					rule.fieldTasks ??
-					rule.field ??
-					'')
-					.toString()
-					.trim();
-			const filterRules = (leadListFilterRulesParam?.values ?? [])
-				.map((rule) => ({
-					field: resolveLeadFilterField(rule ?? {}),
-					operator: (rule?.operator ?? '').toString().trim(),
-					value: resolveRuleValue(
-						rule ?? {},
-						queryFields.find((field) => field.key === (rule?.field ?? '').toString().trim()),
-					),
-				}))
-				.filter((rule) => rule.field.length > 0 && rule.operator.length > 0)
-				.map((rule) => {
-					if (noValueOperators.has(normalizeOperator(rule.operator))) {
-						return { field: rule.field, operator: rule.operator };
-					}
-					if (!rule.value.length) {
-						throw new NodeOperationError(
-							ctx.getNode(),
-							`Filter value is required for operator "${rule.operator}" on field "${rule.field}"`,
-							{ itemIndex, description: 'Provide a value or choose a valueless operator' },
-						);
-					}
-					return rule;
-				});
-			if (filterRules.length) {
-				listBody.filter = {
-					mode: normalizeFilterMode(leadListFilterMode),
-					rules: filterRules,
-				};
-			}
+			const filter = await buildLeadFilter(leadListFilterMode, leadListFilterRulesParam);
+			if (filter) listBody.filter = filter;
 			body = listBody;
 		} else {
 			const listBody: JsonRecord = (body ?? {}) as JsonRecord;
@@ -339,8 +549,13 @@ async function handleLeads(
 	});
 
 	try {
-		const response = await ctx.helpers.request(options);
-		return { json: response };
+		const response = await executeAdhubRequest(
+			ctx.helpers.httpRequest,
+			options,
+			ctx.getNode(),
+			itemIndex,
+		);
+		return { json: formatAdhubNodeResponse(response) as JsonObject };
 	} catch (error) {
 		throw new NodeApiError(ctx.getNode(), error as unknown as JsonObject, { itemIndex });
 	}
