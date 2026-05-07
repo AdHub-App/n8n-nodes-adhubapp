@@ -15,7 +15,7 @@ export interface AdhubAppCredentials {
 
 export type ApiConfig = AdhubAppCredentials;
 
-const ADHUB_BASE_URL = 'https://adhub-v2.test'; // Use test URL for all operations; it proxies to the correct environment based on the token.
+const ADHUB_BASE_URL = 'https://web.adhubapp.com';
 const REQUEST_TIMEOUT_MS = 30_000;
 
 // ---------------------------------------------------------------------------
