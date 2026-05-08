@@ -4,6 +4,8 @@ import { NodeApiError, NodeOperationError } from 'n8n-workflow';
 import {
 	type ApiConfig,
 	buildRequestOptions,
+	executeAdhubRequest,
+	formatAdhubNodeResponse,
 	parseJson,
 	fetchQueryFields,
 	resolveRuleValue,
@@ -173,7 +175,7 @@ async function handleTasks(
 				}
 				body = formBody;
 			} else {
-				const listBody = parseJson(taskListBodyRaw, 'Body') as JsonRecord;
+				const listBody = parseJson(taskListBodyRaw, 'Body', ctx.getNode(), itemIndex) as JsonRecord;
 				const filter = listBody.filter as JsonRecord | undefined;
 				if (filter) {
 					const rules = filter.rules as unknown;
@@ -200,7 +202,7 @@ async function handleTasks(
 				}
 				body = formBody;
 			} else {
-				body = parseJson(taskBodyRaw, 'Body');
+				body = parseJson(taskBodyRaw, 'Body', ctx.getNode(), itemIndex) as JsonRecord;
 			}
 		} else if (operation === 'completeTask') {
 			if (normalizedTaskUpdatedAt) {
@@ -226,8 +228,13 @@ async function handleTasks(
 	});
 
 	try {
-		const response = await ctx.helpers.request(options);
-		return { json: response };
+		const response = await executeAdhubRequest(
+			ctx.helpers.httpRequest,
+			options,
+			ctx.getNode(),
+			itemIndex,
+		);
+		return { json: formatAdhubNodeResponse(response) as JsonObject };
 	} catch (error) {
 		throw new NodeApiError(ctx.getNode(), error as unknown as JsonObject, { itemIndex });
 	}

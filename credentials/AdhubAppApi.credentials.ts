@@ -3,7 +3,7 @@ import type { ICredentialTestRequest, ICredentialType, Icon, INodeProperties } f
 export class AdhubAppApi implements ICredentialType {
 	name = 'adhubAppApi';
 	displayName = 'AdHub App API';
-	documentationUrl = 'https://adhub-main-d1fcap.laravel.cloud/docs/swagger';
+	documentationUrl = 'https://web.adhubapp.com/docs/swagger';
 	icon: Icon = 'file:adhubapp.svg';
 
 	authenticate = {

@@ -1,7 +1,14 @@
 import type { IExecuteFunctions, INodeExecutionData, JsonObject } from 'n8n-workflow';
 import { NodeApiError, NodeOperationError } from 'n8n-workflow';
 
-import { type ApiConfig, buildRequestOptions, parseJson, JsonRecord } from '../helpers';
+import {
+	type ApiConfig,
+	buildRequestOptions,
+	executeAdhubRequest,
+	formatAdhubNodeResponse,
+	parseJson,
+	JsonRecord,
+} from '../helpers';
 
 type LeadStatusOperations =
 	| 'listLeadStatuses'
@@ -20,7 +27,6 @@ async function handleLeadStatuses(
 	const statusBodyType = ctx.getNodeParameter('statusBodyType', itemIndex, 'form') as string;
 	const statusName = ctx.getNodeParameter('statusName', itemIndex, '') as string;
 	const statusColor = ctx.getNodeParameter('statusColor', itemIndex, '') as string;
-	const statusIsProtected = ctx.getNodeParameter('statusIsProtected', itemIndex, false) as boolean;
 	const statusBodyRaw = ctx.getNodeParameter('statusBody', itemIndex, '') as string;
 
 	let method: 'GET' | 'POST' | 'PUT' | 'DELETE';
@@ -62,10 +68,10 @@ async function handleLeadStatuses(
 		if (statusBodyType === 'form') {
 			const formBody: JsonRecord = { name: statusName };
 			if (statusColor) formBody.color = statusColor;
-			formBody.is_protected = statusIsProtected;
 			body = formBody;
 		} else {
-			body = parseJson(statusBodyRaw, 'Body');
+			body = parseJson(statusBodyRaw, 'Body', ctx.getNode(), itemIndex) as JsonRecord;
+			delete body.is_protected;
 		}
 	}
 
@@ -77,8 +83,13 @@ async function handleLeadStatuses(
 	});
 
 	try {
-		const response = await ctx.helpers.request(options);
-		return { json: response };
+		const response = await executeAdhubRequest(
+			ctx.helpers.httpRequest,
+			options,
+			ctx.getNode(),
+			itemIndex,
+		);
+		return { json: formatAdhubNodeResponse(response) as JsonObject };
 	} catch (error) {
 		throw new NodeApiError(ctx.getNode(), error as unknown as JsonObject, { itemIndex });
 	}

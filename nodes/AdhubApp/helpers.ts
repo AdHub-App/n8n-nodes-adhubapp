@@ -1,4 +1,10 @@
-import type { IDataObject, IHttpRequestMethods, IHttpRequestOptions } from 'n8n-workflow';
+import type {
+	IDataObject,
+	IHttpRequestMethods,
+	IHttpRequestOptions,
+	INode,
+} from 'n8n-workflow';
+import { NodeOperationError } from 'n8n-workflow';
 
 export type JsonRecord = IDataObject;
 
@@ -34,7 +40,7 @@ const queryFieldsCache = new Map<string, CacheEntry>();
 const CACHE_TTL_MS = 5 * 60 * 1000;
 
 interface RequestContext {
-	helpers: { request: (options: IHttpRequestOptions) => Promise<unknown> };
+	helpers: { httpRequest: (options: IHttpRequestOptions) => Promise<unknown> };
 }
 
 export async function fetchQueryFields(
@@ -55,7 +61,7 @@ export async function fetchQueryFields(
 		qs: { context },
 	});
 
-	const response = (await ctx.helpers.request(options)) as unknown;
+	const response = (await ctx.helpers.httpRequest(options)) as unknown;
 	let fields: QueryFieldDefinition[] = [];
 
 	if (Array.isArray(response)) {
@@ -116,15 +122,25 @@ export function resolveRuleValue(
 // JSON parsing helper
 // ---------------------------------------------------------------------------
 
-export function parseJson(value: string | undefined, fieldName: string): JsonRecord {
+export function parseJson(
+	value: string | undefined,
+	fieldName: string,
+	node: INode,
+	itemIndex?: number,
+): unknown {
 	if (!value) return {};
 	try {
 		const parsed = JSON.parse(value);
-		if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) return parsed as JsonRecord;
-		throw new Error(`${fieldName} must be a JSON object`);
+		if (parsed !== null && typeof parsed === 'object') return parsed;
+		throw new NodeOperationError(node, `${fieldName} must be valid JSON`, {
+			itemIndex,
+			description: 'Expected a JSON object or array.',
+		});
 	} catch (error) {
 		const message = error instanceof Error ? error.message : String(error);
-		throw new Error(`Invalid JSON in "${fieldName}": ${message}`);
+		throw new NodeOperationError(node, `Invalid JSON in "${fieldName}": ${message}`, {
+			itemIndex,
+		});
 	}
 }
 
@@ -162,4 +178,57 @@ export function buildRequestOptions(config: {
 	}
 
 	return options;
+}
+
+export function isTlsCertificateVerificationError(error: unknown): boolean {
+	const errorMessage =
+		error instanceof Error
+			? error.message
+			: typeof error === 'string'
+				? error
+				: '';
+
+	return (
+		errorMessage.includes('UNABLE_TO_VERIFY_LEAF_SIGNATURE') ||
+		errorMessage.includes('unable to verify the first certificate')
+	);
+}
+
+export async function executeAdhubRequest(
+	request: (options: IHttpRequestOptions) => Promise<unknown>,
+	options: IHttpRequestOptions,
+	node: INode,
+	itemIndex?: number,
+): Promise<unknown> {
+	try {
+		return await request(options);
+	} catch (error) {
+		if (isTlsCertificateVerificationError(error)) {
+			throw new NodeOperationError(node, 'TLS certificate verification failed when contacting AdHub API.', {
+				itemIndex,
+				description:
+					'If your environment uses a private root CA, run n8n/Node.js with --use-system-ca. For local test environments only, you can also enable the "Ignore SSL Issues" credential option.',
+			});
+		}
+		const message = error instanceof Error ? error.message : String(error);
+		throw new NodeOperationError(node, message, { itemIndex });
+	}
+}
+
+export function formatAdhubNodeResponse(response: unknown): JsonRecord {
+	if (Array.isArray(response)) {
+		return { data: response as unknown as IDataObject[] };
+	}
+
+	if (response && typeof response === 'object') {
+		const payload = response as JsonRecord;
+
+		if (Object.prototype.hasOwnProperty.call(payload, 'data')) {
+			return { data: payload.data as JsonRecord['data'] };
+		}
+
+		return payload;
+	}
+
+	return { data: response as JsonRecord['data'] };
 }

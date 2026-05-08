@@ -4,6 +4,25 @@ All notable changes to this project will be documented in this file.
 
 ---
 
+## [1.1.0] - 2026-05-08
+
+### Enhanced dynamic lead and task workflows
+
+#### AdHub App - Action Node
+
+- Added dynamic dropdown support for lead-related resources and field selectors.
+- Improved lead and task filtering/query handling for cleaner node configuration.
+- Refined helpers and resource handlers to improve consistency across CRUD and bulk operations.
+
+#### AdHub App Trigger - Webhook Node
+
+- Updated trigger shared services and webhook handling internals for more reliable event processing.
+
+#### Docs and tooling
+
+- Updated README and ignore files to match current package behavior.
+- Updated project scripts and TypeScript/build configuration for release readiness.
+
 ## [1.0.0] — 2026-05-07
 
 ### Initial stable release

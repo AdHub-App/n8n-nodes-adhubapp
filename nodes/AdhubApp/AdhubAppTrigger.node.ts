@@ -1,5 +1,6 @@
 import type {
 	INodeExecutionData,
+	IHookFunctions,
 	INodeType,
 	INodeTypeDescription,
 	IWebhookFunctions,
@@ -7,6 +8,10 @@ import type {
 } from 'n8n-workflow';
 import { NodeConnectionTypes } from 'n8n-workflow';
 
+import {
+	type AdhubAppCredentials,
+	buildRequestOptions,
+} from './helpers';
 import {
 	buildPayloadHash,
 	firstNonEmptyString,
@@ -36,7 +41,7 @@ export class AdhubAppTrigger implements INodeType {
 		name: 'adhubAppTrigger',
 		group: ['trigger'],
 		version: 1,
-		subtitle: 'Webhook',
+		subtitle: '',
 		description: 'Triggers workflows when AdHub sends subscribed webhook events',
 		defaults: {
 			name: 'AdHub App Trigger',
@@ -44,6 +49,7 @@ export class AdhubAppTrigger implements INodeType {
 		icon: 'file:adhubapp.svg',
 		inputs: [],
 		outputs: [NodeConnectionTypes.Main],
+		usableAsTool: true,
 		credentials: [
 			{
 				name: 'adhubAppApi',
@@ -86,6 +92,46 @@ export class AdhubAppTrigger implements INodeType {
 				description: 'Only run the workflow for matching AdHub webhook event types',
 			},
 		],
+	};
+
+	webhookMethods = {
+		default: {
+			async checkExists(this: IHookFunctions): Promise<boolean> {
+				const staticData = this.getWorkflowStaticData('node') as JsonRecord;
+				const webhookUrl = this.getNodeWebhookUrl('default');
+
+				return Boolean(webhookUrl && staticData.webhookUrl === webhookUrl);
+			},
+			async create(this: IHookFunctions): Promise<boolean> {
+				const credentials = await this.getCredentials<AdhubAppCredentials>('adhubAppApi');
+				const webhookUrl = this.getNodeWebhookUrl('default');
+
+				if (!webhookUrl) {
+					return false;
+				}
+
+				await this.helpers.httpRequestWithAuthentication.call(
+					this as never,
+					'adhubAppApi',
+					buildRequestOptions({
+						method: 'POST',
+						endpoint: '/integrations/n8n/verify',
+						apiConfig: credentials,
+					}),
+				);
+
+				const staticData = this.getWorkflowStaticData('node') as JsonRecord;
+				staticData.webhookUrl = webhookUrl;
+
+				return true;
+			},
+			async delete(this: IHookFunctions): Promise<boolean> {
+				const staticData = this.getWorkflowStaticData('node') as JsonRecord;
+				delete staticData.webhookUrl;
+
+				return true;
+			},
+		},
 	};
 
 	async webhook(this: IWebhookFunctions): Promise<IWebhookResponseData> {

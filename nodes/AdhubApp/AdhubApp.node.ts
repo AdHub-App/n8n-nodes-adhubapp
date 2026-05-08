@@ -5,8 +5,9 @@ import type {
 	INodePropertyOptions,
 	INodeType,
 	INodeTypeDescription,
+	JsonObject,
 } from 'n8n-workflow';
-import { NodeConnectionTypes, NodeOperationError } from 'n8n-workflow';
+import { NodeApiError, NodeConnectionTypes, NodeOperationError } from 'n8n-workflow';
 import {
 	type AdhubAppCredentials,
 	buildRequestOptions,
@@ -71,6 +72,7 @@ function readCurrentStringParam(
 		`filter.${parameterName}`,
 		`filter.values.${parameterName}`,
 		`leadListFilterRules.values.${parameterName}`,
+		`bulkLeadFilterRules.values.${parameterName}`,
 		`taskListFilterRules.values.${parameterName}`,
 	];
 	for (const candidate of candidates) {
@@ -135,6 +137,11 @@ function readLeadRuleFieldKey(ctx: ILoadOptionsFunctions): string {
 		readFixedCollectionRuleParam(ctx, 'leadListFilterRules', 'fieldLeadCustomFields'),
 		readFixedCollectionRuleParam(ctx, 'leadListFilterRules', 'fieldTasks'),
 		readFixedCollectionRuleParam(ctx, 'leadListFilterRules', 'field'),
+		readFixedCollectionRuleParam(ctx, 'bulkLeadFilterRules', 'fieldGeneral'),
+		readFixedCollectionRuleParam(ctx, 'bulkLeadFilterRules', 'fieldLeads'),
+		readFixedCollectionRuleParam(ctx, 'bulkLeadFilterRules', 'fieldLeadCustomFields'),
+		readFixedCollectionRuleParam(ctx, 'bulkLeadFilterRules', 'fieldTasks'),
+		readFixedCollectionRuleParam(ctx, 'bulkLeadFilterRules', 'field'),
 		readCurrentStringParam(ctx, 'field'),
 	].filter((key) => key.length > 0);
 	return candidateKeys[0] ?? '';
@@ -256,8 +263,9 @@ export class AdhubApp implements INodeType {
 		displayName: 'AdHub App',
 		name: 'adhubApp',
 		group: ['output'],
-		version: 1,
-		subtitle: 'API v1',
+		version: [1],
+		defaultVersion: 1,
+		subtitle: '',
 		description: 'Manage AdHub leads, activities, sources, statuses, tags, and custom fields',
 		defaults: {
 			name: 'AdHub App',
@@ -381,11 +389,6 @@ export class AdhubApp implements INodeType {
 					{ name: 'Get Entries', value: 'listLeadEntries', action: 'Get lead entries' },
 					{ name: 'Get Timeline', value: 'getLeadTimeline', action: 'Get lead timeline' },
 					{ name: 'List', value: 'listLeads', action: 'Get all leads' },
-					{
-						name: 'List Query Fields',
-						value: 'listLeadQueryFields',
-						action: 'List lead query fields',
-					},
 					{ name: 'Update', value: 'updateLead', action: 'Update a lead' },
 				],
 				default: 'listLeads',
@@ -674,25 +677,6 @@ export class AdhubApp implements INodeType {
 					},
 				},
 				description: 'Maximum number of entries to return (1-100). Set 0 to omit.',
-			},
-			{
-				displayName: 'Context',
-				name: 'queryContext',
-				type: 'options',
-				options: [
-					{ name: 'Lead Assignment', value: 'lead.assignment' },
-					{ name: 'Lead List', value: 'lead.list' },
-					{ name: 'Task List', value: 'task.list' },
-				],
-				default: 'lead.list',
-				required: true,
-				displayOptions: {
-					show: {
-						resource: ['leads'],
-						operation: ['listLeadQueryFields'],
-					},
-				},
-				description: 'Context key for query builder fields',
 			},
 			{
 				displayName: 'Body Type',
@@ -1028,6 +1012,406 @@ export class AdhubApp implements INodeType {
 				},
 			},
 			{
+				displayName: 'Body Type',
+				name: 'bulkLeadBodyType',
+				type: 'options',
+				options: [
+					{ name: 'Form', value: 'form' },
+					{ name: 'JSON', value: 'json' },
+				],
+				default: 'form',
+				displayOptions: {
+					show: {
+						resource: ['leads'],
+						operation: ['bulkDeleteLeads', 'bulkUpdateLeadFields', 'bulkSyncLeadTags', 'bulkUpdateLeadCustomFields'],
+					},
+				},
+			},
+			{
+				displayName: 'Target Type',
+				name: 'bulkLeadTargetType',
+				type: 'options',
+				options: [
+					{ name: 'Filter', value: 'filter' },
+					{ name: 'IDs', value: 'ids' },
+				],
+				default: 'ids',
+				displayOptions: {
+					show: {
+						resource: ['leads'],
+						operation: ['bulkDeleteLeads', 'bulkUpdateLeadFields', 'bulkSyncLeadTags', 'bulkUpdateLeadCustomFields'],
+						bulkLeadBodyType: ['form'],
+					},
+				},
+				description: 'Choose whether to target specific lead IDs or use filter rules',
+			},
+			{
+				displayName: 'Lead IDs',
+				name: 'bulkLeadIds',
+				type: 'string',
+				default: '[]',
+				placeholder: '["0190c6e2-e4b0-7c83-a6f9-5e3c9b2a4f10","0190c6e2-e4b0-7c83-a6f9-5e3c9b2a4f11"]',
+				displayOptions: {
+					show: {
+						resource: ['leads'],
+						operation: ['bulkDeleteLeads', 'bulkUpdateLeadFields', 'bulkSyncLeadTags', 'bulkUpdateLeadCustomFields'],
+						bulkLeadBodyType: ['form'],
+						bulkLeadTargetType: ['ids'],
+					},
+				},
+				description: 'Lead IDs as a JSON array of strings',
+			},
+			{
+				displayName: 'Filter Mode',
+				name: 'bulkLeadFilterMode',
+				type: 'options',
+				options: [
+					{ name: 'AND', value: 'and' },
+					{ name: 'OR', value: 'or' },
+				],
+				default: 'and',
+				displayOptions: {
+					show: {
+						resource: ['leads'],
+						operation: ['bulkDeleteLeads', 'bulkUpdateLeadFields', 'bulkSyncLeadTags', 'bulkUpdateLeadCustomFields'],
+						bulkLeadBodyType: ['form'],
+						bulkLeadTargetType: ['filter'],
+					},
+				},
+				description: 'How filter rules are combined',
+			},
+			{
+				displayName: 'Filter Rules',
+				name: 'bulkLeadFilterRules',
+				type: 'fixedCollection',
+				typeOptions: {
+					multipleValues: true,
+				},
+				default: {},
+				placeholder: 'Add filter rule',
+				options: [
+					{
+						name: 'values',
+						displayName: 'Rule',
+						values: [
+							{
+								displayName: 'Category Name or ID',
+								name: 'category',
+								type: 'options',
+								default: 'leads',
+								typeOptions: {
+									loadOptionsMethod: 'getLeadFilterCategories',
+								},
+								description:
+									'Choose from the list, or specify an ID using an <a href="https://docs.n8n.io/code/expressions/">expression</a>',
+							},
+							{
+								displayName: 'Field Name or ID',
+								name: 'fieldGeneral',
+								type: 'options',
+								default: '',
+								typeOptions: {
+									loadOptionsMethod: 'getLeadGeneralFilterFields',
+								},
+								displayOptions: {
+									show: {
+										category: ['general'],
+									},
+								},
+								description:
+									'Choose from the list, or specify an ID using an <a href="https://docs.n8n.io/code/expressions/">expression</a>',
+							},
+							{
+								displayName: 'Field Name or ID',
+								name: 'fieldLeads',
+								type: 'options',
+								default: '',
+								typeOptions: {
+									loadOptionsMethod: 'getLeadMainFilterFields',
+								},
+								displayOptions: {
+									show: {
+										category: ['leads'],
+									},
+								},
+								description:
+									'Choose from the list, or specify an ID using an <a href="https://docs.n8n.io/code/expressions/">expression</a>',
+							},
+							{
+								displayName: 'Field Name or ID',
+								name: 'fieldLeadCustomFields',
+								type: 'options',
+								default: '',
+								typeOptions: {
+									loadOptionsMethod: 'getLeadCustomFilterFields',
+								},
+								displayOptions: {
+									show: {
+										category: ['leadCustomFields'],
+									},
+								},
+								description:
+									'Choose from the list, or specify an ID using an <a href="https://docs.n8n.io/code/expressions/">expression</a>',
+							},
+							{
+								displayName: 'Field Name or ID',
+								name: 'fieldTasks',
+								type: 'options',
+								default: '',
+								typeOptions: {
+									loadOptionsMethod: 'getLeadTaskFilterFields',
+								},
+								displayOptions: {
+									show: {
+										category: ['tasks'],
+									},
+								},
+								description:
+									'Choose from the list, or specify an ID using an <a href="https://docs.n8n.io/code/expressions/">expression</a>',
+							},
+							{
+								displayName: 'Operator Name or ID',
+								name: 'operator',
+								type: 'options',
+								default: '',
+								typeOptions: {
+									loadOptionsMethod: 'getLeadFilterOperators',
+									loadOptionsDependsOn: [
+										'category',
+										'values.category',
+										'fieldGeneral',
+										'values.fieldGeneral',
+										'fieldLeads',
+										'values.fieldLeads',
+										'fieldLeadCustomFields',
+										'values.fieldLeadCustomFields',
+										'fieldTasks',
+										'values.fieldTasks',
+										'bulkLeadFilterRules',
+										'bulkLeadFilterRules.values.category',
+										'bulkLeadFilterRules.values.fieldGeneral',
+										'bulkLeadFilterRules.values.fieldLeads',
+										'bulkLeadFilterRules.values.fieldLeadCustomFields',
+										'bulkLeadFilterRules.values.fieldTasks',
+									],
+								},
+								description:
+									'Choose from the list, or specify an ID using an <a href="https://docs.n8n.io/code/expressions/">expression</a>',
+							},
+							{
+								displayName: 'Value',
+								name: 'value',
+								type: 'string',
+								default: '',
+								displayOptions: {
+									hide: {
+										operator: VALUE_LESS_FILTER_OPERATORS,
+									},
+								},
+								description: 'Filter value for the selected field',
+							},
+						],
+					},
+				],
+				displayOptions: {
+					show: {
+						resource: ['leads'],
+						operation: ['bulkDeleteLeads', 'bulkUpdateLeadFields', 'bulkSyncLeadTags', 'bulkUpdateLeadCustomFields'],
+						bulkLeadBodyType: ['form'],
+						bulkLeadTargetType: ['filter'],
+					},
+				},
+				description: 'Filter rules to target leads',
+			},
+			{
+				displayName: 'Status Name or ID',
+				name: 'bulkLeadStatusId',
+				type: 'options',
+				default: '',
+				typeOptions: {
+					loadOptionsMethod: 'getLeadStatusOptions',
+				},
+				displayOptions: {
+					show: {
+						resource: ['leads'],
+						operation: ['bulkUpdateLeadFields'],
+						bulkLeadBodyType: ['form'],
+					},
+				},
+				description:
+					'Choose from the list, or specify an ID using an <a href="https://docs.n8n.io/code/expressions/">expression</a>',
+			},
+			{
+				displayName: 'Source Name or ID',
+				name: 'bulkLeadSourceId',
+				type: 'options',
+				default: '',
+				typeOptions: {
+					loadOptionsMethod: 'getLeadSourceOptions',
+				},
+				displayOptions: {
+					show: {
+						resource: ['leads'],
+						operation: ['bulkUpdateLeadFields'],
+						bulkLeadBodyType: ['form'],
+					},
+				},
+				description:
+					'Choose from the list, or specify an ID using an <a href="https://docs.n8n.io/code/expressions/">expression</a>',
+			},
+			{
+				displayName: 'Owner Name or ID',
+				name: 'bulkLeadOwnerId',
+				type: 'options',
+				default: '',
+				typeOptions: {
+					loadOptionsMethod: 'getLeadOwnerOptions',
+				},
+				displayOptions: {
+					show: {
+						resource: ['leads'],
+						operation: ['bulkUpdateLeadFields'],
+						bulkLeadBodyType: ['form'],
+					},
+				},
+				description:
+					'Choose from the list, or specify an ID using an <a href="https://docs.n8n.io/code/expressions/">expression</a>',
+			},
+			{
+				displayName: 'Add Tag IDs',
+				name: 'bulkAddTagIds',
+				type: 'fixedCollection',
+				typeOptions: {
+					multipleValues: true,
+				},
+				default: {},
+				placeholder: 'Add tag ID',
+				options: [
+					{
+						name: 'values',
+						displayName: 'Tag',
+						values: [
+							{
+								displayName: 'Tag Name or ID',
+								name: 'value',
+								type: 'options',
+								default: '',
+								typeOptions: {
+									loadOptionsMethod: 'getLeadTagOptions',
+								},
+								description:
+									'Choose from the list, or specify an ID using an <a href="https://docs.n8n.io/code/expressions/">expression</a>',
+							},
+						],
+					},
+				],
+				displayOptions: {
+					show: {
+						resource: ['leads'],
+						operation: ['bulkSyncLeadTags'],
+						bulkLeadBodyType: ['form'],
+					},
+				},
+				description: 'Tags to add',
+			},
+			{
+				displayName: 'Remove Tag IDs',
+				name: 'bulkRemoveTagIds',
+				type: 'fixedCollection',
+				typeOptions: {
+					multipleValues: true,
+				},
+				default: {},
+				placeholder: 'Add tag ID',
+				options: [
+					{
+						name: 'values',
+						displayName: 'Tag',
+						values: [
+							{
+								displayName: 'Tag Name or ID',
+								name: 'value',
+								type: 'options',
+								default: '',
+								typeOptions: {
+									loadOptionsMethod: 'getLeadTagOptions',
+								},
+								description:
+									'Choose from the list, or specify an ID using an <a href="https://docs.n8n.io/code/expressions/">expression</a>',
+							},
+						],
+					},
+				],
+				displayOptions: {
+					show: {
+						resource: ['leads'],
+						operation: ['bulkSyncLeadTags'],
+						bulkLeadBodyType: ['form'],
+					},
+				},
+				description: 'Tags to remove',
+			},
+			{
+				displayName: 'Custom Fields',
+				name: 'bulkLeadCustomFieldValues',
+				type: 'fixedCollection',
+				typeOptions: {
+					multipleValues: true,
+				},
+				default: {},
+				placeholder: 'Add Custom Field',
+				options: [
+					{
+						name: 'values',
+						displayName: 'Custom Field',
+						values: [
+							{
+								displayName: 'Field Name or ID',
+								name: 'key',
+								type: 'options',
+								default: '',
+								typeOptions: {
+									loadOptionsMethod: 'getLeadCustomFieldOptions',
+								},
+								description:
+									'Choose from the list, or specify an ID using an <a href="https://docs.n8n.io/code/expressions/">expression</a>',
+							},
+							{
+								displayName: 'Value',
+								name: 'value',
+								type: 'string',
+								default: '',
+								description:
+									'Plain text value for the selected custom field',
+							},
+						],
+					},
+				],
+				displayOptions: {
+					show: {
+						resource: ['leads'],
+						operation: ['bulkUpdateLeadCustomFields'],
+						bulkLeadBodyType: ['form'],
+					},
+				},
+				description: 'Custom field values to update',
+			},
+			{
+				displayName: 'Additional / Undocumented Fields (JSON)',
+				name: 'bulkUpdateCustomFieldsAdditionalFields',
+				type: 'string',
+				default: '',
+				placeholder: '{"undocumented_field":"value"}',
+				displayOptions: {
+					show: {
+						resource: ['leads'],
+						operation: ['bulkUpdateLeadCustomFields'],
+						bulkLeadBodyType: ['form'],
+					},
+				},
+				description: 'Additional custom field payload as raw JSON object',
+			},
+			{
 				displayName: 'Bulk Delete Body (JSON)',
 				name: 'bulkDeleteBody',
 				type: 'string',
@@ -1038,6 +1422,7 @@ export class AdhubApp implements INodeType {
 					show: {
 						resource: ['leads'],
 						operation: ['bulkDeleteLeads'],
+						bulkLeadBodyType: ['json'],
 					},
 				},
 			},
@@ -1053,6 +1438,7 @@ export class AdhubApp implements INodeType {
 					show: {
 						resource: ['leads'],
 						operation: ['bulkUpdateLeadFields'],
+						bulkLeadBodyType: ['json'],
 					},
 				},
 			},
@@ -1068,6 +1454,7 @@ export class AdhubApp implements INodeType {
 					show: {
 						resource: ['leads'],
 						operation: ['bulkSyncLeadTags'],
+						bulkLeadBodyType: ['json'],
 					},
 				},
 			},
@@ -1083,6 +1470,7 @@ export class AdhubApp implements INodeType {
 					show: {
 						resource: ['leads'],
 						operation: ['bulkUpdateLeadCustomFields'],
+						bulkLeadBodyType: ['json'],
 					},
 				},
 			},
@@ -1304,7 +1692,7 @@ export class AdhubApp implements INodeType {
 				type: 'string',
 				default: '',
 				placeholder:
-					'{"label":"Industry","name":"industry","type":"select","options":["Retail"],"rules":["required"],"default_value":"Retail","key":"industry"}',
+					'{"label":"Industry","name":"industry","type":"select","options":["saas","ecommerce"],"rules":["required"],"default_value":"saas"}',
 				description: 'Request body as a JSON object',
 				displayOptions: {
 					show: {
@@ -1348,14 +1736,15 @@ export class AdhubApp implements INodeType {
 					{ name: 'Checkbox', value: 'checkbox' },
 					{ name: 'Date', value: 'date' },
 					{ name: 'Email', value: 'email' },
+					{ name: 'Input', value: 'input' },
 					{ name: 'Multi Select', value: 'multi_select' },
 					{ name: 'Phone', value: 'phone' },
 					{ name: 'Radio', value: 'radio' },
 					{ name: 'Select', value: 'select' },
-					{ name: 'Text Input', value: 'text_input' },
+					{ name: 'Text Input (Legacy)', value: 'text_input' },
 					{ name: 'Textarea', value: 'textarea' },
 				],
-				default: 'text_input',
+				default: 'input',
 				displayOptions: {
 					show: {
 						resource: ['leadCustomFields'],
@@ -1424,20 +1813,6 @@ export class AdhubApp implements INodeType {
 						customFieldBodyType: ['form'],
 					},
 				},
-			},
-			{
-				displayName: 'Key',
-				name: 'customFieldKey',
-				type: 'string',
-				default: '',
-				displayOptions: {
-					show: {
-						resource: ['leadCustomFields'],
-						operation: ['createLeadCustomField', 'updateLeadCustomField'],
-						customFieldBodyType: ['form'],
-					},
-				},
-				description: 'Unique key for the custom field',
 			},
 			{
 				displayName: 'Updated At',
@@ -1621,7 +1996,7 @@ export class AdhubApp implements INodeType {
 									loadOptionsMethod: 'getLeadCustomFieldOptions',
 								},
 								description:
-									'Choose from the list, or specify a key using an <a href="https://docs.n8n.io/code/expressions/">expression</a>',
+									'Choose from the list, or specify an ID using an <a href="https://docs.n8n.io/code/expressions/">expression</a>',
 							},
 							{
 								displayName: 'Value',
@@ -1629,24 +2004,7 @@ export class AdhubApp implements INodeType {
 								type: 'string',
 								default: '',
 								description:
-									'Use for text, date, number, email, phone, and textarea fields. For select / radio / checkbox / multi-select fields use the option picker below.',
-							},
-							{
-								displayName: 'Option Value',
-								name: 'valueOptions',
-								type: 'options',
-								default: '',
-								typeOptions: {
-									loadOptionsMethod: 'getLeadCustomFieldValueOptions',
-									loadOptionsDependsOn: [
-										'key',
-										'values.key',
-										'leadCustomFieldValues',
-										'leadCustomFieldValues.values.key',
-									],
-								},
-								description:
-									'For select, radio, checkbox, and multi-select fields. Choose from the list, or specify a value using an <a href="https://docs.n8n.io/code/expressions/">expression</a>. Leave blank for text fields.',
+									'Plain text value for the selected custom field',
 							},
 						],
 					},
@@ -1775,19 +2133,6 @@ export class AdhubApp implements INodeType {
 					},
 				},
 				description: 'Hex color like #22c55e',
-			},
-			{
-				displayName: 'Is Protected',
-				name: 'statusIsProtected',
-				type: 'boolean',
-				default: false,
-				displayOptions: {
-					show: {
-						resource: ['leadStatuses'],
-						operation: ['createLeadStatus', 'updateLeadStatus'],
-						statusBodyType: ['form'],
-					},
-				},
 			},
 			{
 				displayName: 'Body Type',
@@ -2190,7 +2535,11 @@ export class AdhubApp implements INodeType {
 					endpoint: '/lead-statuses',
 					apiConfig: credentials,
 				});
-				const response = (await this.helpers.request(reqOptions)) as
+				const response = (await this.helpers.httpRequestWithAuthentication.call(
+					this as never,
+					'adhubAppApi',
+					reqOptions,
+				)) as
 					| { data?: Array<Record<string, unknown>> }
 					| Array<Record<string, unknown>>;
 				const items = Array.isArray(response) ? response : (response?.data ?? []);
@@ -2213,7 +2562,11 @@ export class AdhubApp implements INodeType {
 					endpoint: '/lead-sources',
 					apiConfig: credentials,
 				});
-				const response = (await this.helpers.request(reqOptions)) as
+				const response = (await this.helpers.httpRequestWithAuthentication.call(
+					this as never,
+					'adhubAppApi',
+					reqOptions,
+				)) as
 					| { data?: Array<Record<string, unknown>> }
 					| Array<Record<string, unknown>>;
 				const items = Array.isArray(response) ? response : (response?.data ?? []);
@@ -2236,7 +2589,11 @@ export class AdhubApp implements INodeType {
 					endpoint: '/users',
 					apiConfig: credentials,
 				});
-				const response = (await this.helpers.request(reqOptions)) as
+				const response = (await this.helpers.httpRequestWithAuthentication.call(
+					this as never,
+					'adhubAppApi',
+					reqOptions,
+				)) as
 					| { data?: Array<{ id?: string; name?: string; email?: string; role?: string }> }
 					| Array<{ id?: string; name?: string; email?: string; role?: string }>;
 				const items = Array.isArray(response) ? response : (response?.data ?? []);
@@ -2259,7 +2616,11 @@ export class AdhubApp implements INodeType {
 					endpoint: '/lead-tags',
 					apiConfig: credentials,
 				});
-				const response = (await this.helpers.request(reqOptions)) as
+				const response = (await this.helpers.httpRequestWithAuthentication.call(
+					this as never,
+					'adhubAppApi',
+					reqOptions,
+				)) as
 					| { data?: Array<Record<string, unknown>> }
 					| Array<Record<string, unknown>>;
 				const items = Array.isArray(response) ? response : (response?.data ?? []);
@@ -2273,67 +2634,44 @@ export class AdhubApp implements INodeType {
 			async getLeadCustomFieldOptions(
 				this: ILoadOptionsFunctions,
 			): Promise<INodePropertyOptions[]> {
+				const hasRequiredRule = (rules: unknown): boolean => {
+					if (!Array.isArray(rules)) return false;
+					return rules.some((rule) => {
+						if (typeof rule === 'string') {
+							return rule.toLowerCase() === 'required';
+						}
+						if (!rule || typeof rule !== 'object') return false;
+						const record = rule as Record<string, unknown>;
+						return ['rule', 'name', 'type', 'value'].some(
+							(key) => (record[key] ?? '').toString().trim().toLowerCase() === 'required',
+						);
+					});
+				};
 				const credentials = await this.getCredentials<AdhubAppCredentials>('adhubAppApi');
 				const reqOptions = buildRequestOptions({
 					method: 'GET',
 					endpoint: '/lead-custom-fields',
 					apiConfig: credentials,
 				});
-				const response = (await this.helpers.request(reqOptions)) as
-					| { data?: Array<{ key?: string; label?: string }> }
-					| Array<{ key?: string; label?: string }>;
+				const response = (await this.helpers.httpRequestWithAuthentication.call(
+					this as never,
+					'adhubAppApi',
+					reqOptions,
+				)) as
+					| { data?: Array<{ id?: string; key?: string; name?: string; label?: string; rules?: unknown[] }> }
+					| Array<{ id?: string; key?: string; name?: string; label?: string; rules?: unknown[] }>;
 				const fields = Array.isArray(response) ? response : (response?.data ?? []);
 				return fields
-					.filter((field) => (field.key ?? '').toString().trim().length > 0)
+					.filter(
+						(field) =>
+							(field.name ?? field.key ?? field.id ?? '').toString().trim().length > 0,
+					)
 					.map((field) => ({
-						name: field.label ?? field.key ?? '',
-						value: field.key ?? '',
+						name: `${field.label ?? field.name ?? field.key ?? ''}${
+							hasRequiredRule(field.rules) ? ' (required)' : ''
+						}`,
+						value: field.name ?? field.key ?? field.id ?? '',
 					}));
-			},
-			async getLeadCustomFieldValueOptions(
-				this: ILoadOptionsFunctions,
-			): Promise<INodePropertyOptions[]> {
-				type CustomField = {
-					key?: string;
-					label?: string;
-					type?: string;
-					options?: string[];
-				};
-				const OPTION_TYPES = new Set(['select', 'multi_select', 'radio', 'checkbox']);
-				// Resolve the currently selected field key from the collection row.
-				const selectedKey = (
-					readCurrentStringParam(this, 'key') ||
-					readFixedCollectionRuleParam(this, 'leadCustomFieldValues', 'key')
-				).trim();
-				if (!selectedKey) {
-					return [{ name: 'Select a field first', value: '' }];
-				}
-				const credentials = await this.getCredentials<AdhubAppCredentials>('adhubAppApi');
-				const reqOptions = buildRequestOptions({
-					method: 'GET',
-					endpoint: '/lead-custom-fields',
-					apiConfig: credentials,
-				});
-				const response = (await this.helpers.request(reqOptions)) as
-					| { data?: CustomField[] }
-					| CustomField[];
-				const fields = (Array.isArray(response) ? response : (response?.data ?? [])) as CustomField[];
-				const field = fields.find(
-					(f) => (f.key ?? '').toString().trim() === selectedKey,
-				);
-				if (!field) {
-					return [{ name: '(field not found)', value: '' }];
-				}
-				const fieldType = (field.type ?? '').toString().trim().toLowerCase().replace(/\s+/g, '_');
-				if (!OPTION_TYPES.has(fieldType)) {
-					// Not a choice-type field — user should use the text Value field above.
-					return [{ name: `(${field.label ?? field.key} is a ${field.type ?? 'text'} field — use the Value field above)`, value: '' }];
-				}
-				const rawOptions = Array.isArray(field.options) ? field.options : [];
-				return rawOptions
-					.map((opt) => opt.toString().trim())
-					.filter((opt) => opt.length > 0)
-					.map((opt) => ({ name: opt, value: opt }));
 			},
 			async getLeadFilterFields(this: ILoadOptionsFunctions): Promise<INodePropertyOptions[]> {
 				const fields = await loadQueryFields(this, 'lead.list');
@@ -2535,9 +2873,19 @@ export class AdhubApp implements INodeType {
 						);
 						break;
 					case 'leads':
-						returnData.push(
-							await handleLeads(this, itemIndex, operation as LeadOperation, apiConfig),
-						);
+						{
+							const leadResult = await handleLeads(
+								this,
+								itemIndex,
+								operation as LeadOperation,
+								apiConfig,
+							);
+							if (Array.isArray(leadResult)) {
+								returnData.push(...leadResult);
+							} else {
+								returnData.push(leadResult);
+							}
+						}
 						break;
 					case 'leadActivities':
 						returnData.push(
@@ -2579,7 +2927,7 @@ export class AdhubApp implements INodeType {
 						pairedItem: { item: itemIndex },
 					});
 				} else {
-					throw error;
+					throw new NodeApiError(this.getNode(), error as JsonObject, { itemIndex });
 				}
 			}
 		}
