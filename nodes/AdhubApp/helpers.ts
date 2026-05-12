@@ -15,7 +15,7 @@ export interface AdhubAppCredentials {
 
 export type ApiConfig = AdhubAppCredentials;
 
-const ADHUB_BASE_URL = 'https://web.adhubapp.com';
+const ADHUB_BASE_URL = 'https://adhub-v2.test';
 const REQUEST_TIMEOUT_MS = 30_000;
 
 // ---------------------------------------------------------------------------

@@ -29,6 +29,7 @@ type QueryField = {
 	options?: Array<{ value?: string; label?: string }>;
 };
 type LeadFilterCategory = 'general' | 'leads' | 'leadCustomFields' | 'tasks';
+type LeadActivityTypeItem = string | Record<string, unknown>;
 const VALUE_LESS_FILTER_OPERATORS = [
 	'Is Empty',
 	'Is Not Empty',
@@ -192,6 +193,58 @@ function findQueryField(fields: QueryField[], fieldKey: string): QueryField | un
 }
 function mapOptions(values: string[]): INodePropertyOptions[] {
 	return values.map((value) => ({ name: value, value }));
+}
+function pickFirstNonEmptyString(values: unknown[]): string {
+	for (const value of values) {
+		if (typeof value === 'string' || typeof value === 'number') {
+			const normalized = value.toString().trim();
+			if (normalized) return normalized;
+		}
+	}
+	return '';
+}
+function extractLeadActivityTypeItems(response: unknown): LeadActivityTypeItem[] {
+	if (Array.isArray(response)) {
+		return response as LeadActivityTypeItem[];
+	}
+	if (!response || typeof response !== 'object') {
+		return [];
+	}
+	const payload = response as Record<string, unknown>;
+	const candidates = [
+		payload.data,
+		payload.items,
+		payload.types,
+		payload.activity_types,
+		payload.activityTypes,
+	];
+	for (const candidate of candidates) {
+		if (Array.isArray(candidate)) {
+			return candidate as LeadActivityTypeItem[];
+		}
+	}
+	return [];
+}
+function mapLeadActivityTypeOptions(items: LeadActivityTypeItem[]): INodePropertyOptions[] {
+	const options = new Map<string, INodePropertyOptions>();
+	for (const item of items) {
+		if (typeof item === 'string') {
+			const value = item.trim();
+			if (value) options.set(value, { name: value, value });
+			continue;
+		}
+		if (!item || typeof item !== 'object') continue;
+		const value = pickFirstNonEmptyString([item.key, item.value, item.slug, item.type, item.name, item.id]);
+		if (!value) continue;
+		const name = pickFirstNonEmptyString([item.name, item.label, item.title, item.type, item.key, value]);
+		const description = pickFirstNonEmptyString([item.description]);
+		options.set(value, {
+			name: name || value,
+			value,
+			description: description || undefined,
+		});
+	}
+	return Array.from(options.values());
 }
 function mapFieldValueOptions(field?: QueryField): INodePropertyOptions[] {
 	const options = Array.isArray(field?.options) ? field.options : [];
@@ -1552,10 +1605,13 @@ export class AdhubApp implements INodeType {
 				},
 			},
 			{
-				displayName: 'Type',
+				displayName: 'Type Name or ID',
 				name: 'activityType',
-				type: 'string',
+				type: 'options',
 				default: '',
+				typeOptions: {
+					loadOptionsMethod: 'getLeadActivityTypeOptions',
+				},
 				displayOptions: {
 					show: {
 						resource: ['leadActivities'],
@@ -1563,7 +1619,8 @@ export class AdhubApp implements INodeType {
 						activityBodyType: ['form'],
 					},
 				},
-				description: 'Activity type key like call, meeting, email',
+				description:
+					'Choose from the list, or specify an ID using an <a href="https://docs.n8n.io/code/expressions/">expression</a>',
 			},
 			{
 				displayName: 'Body',
@@ -2526,6 +2583,25 @@ export class AdhubApp implements INodeType {
 	};
 	methods = {
 		loadOptions: {
+			async getLeadActivityTypeOptions(
+				this: ILoadOptionsFunctions,
+			): Promise<INodePropertyOptions[]> {
+				const credentials = await this.getCredentials<AdhubAppCredentials>('adhubAppApi');
+				const reqOptions = buildRequestOptions({
+					method: 'GET',
+					endpoint: '/leads/activity-types',
+					apiConfig: credentials,
+				});
+				const response = await this.helpers.httpRequestWithAuthentication.call(
+					this as never,
+					'adhubAppApi',
+					reqOptions,
+				);
+				return [
+					{ name: 'Select', value: '' },
+					...mapLeadActivityTypeOptions(extractLeadActivityTypeItems(response)),
+				];
+			},
 			async getLeadStatusOptions(
 				this: ILoadOptionsFunctions,
 			): Promise<INodePropertyOptions[]> {
