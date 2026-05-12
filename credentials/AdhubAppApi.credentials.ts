@@ -19,7 +19,7 @@ export class AdhubAppApi implements ICredentialType {
 	test: ICredentialTestRequest = {
 		request: {
 			method: 'POST',
-			url: 'https://adhub-v2.test/api/v1/integrations/n8n/verify',
+			url: 'https://web.adhubapp.com/api/v1/integrations/n8n/verify',
 			skipSslCertificateValidation: '={{$credentials.ignoreSslIssues === true}}',
 		},
 	};
