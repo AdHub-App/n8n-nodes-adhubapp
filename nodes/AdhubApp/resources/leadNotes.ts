@@ -28,18 +28,22 @@ async function handleLeadNotes(
 	const noteBodyRaw = ctx.getNodeParameter('noteBody', itemIndex, '') as string;
 	const noteBodyType = ctx.getNodeParameter('noteBodyType', itemIndex, 'form') as string;
 	const noteBodyText = ctx.getNodeParameter('noteBodyText', itemIndex, '') as string;
-	const noteLimit = ctx.getNodeParameter('noteLimit', itemIndex, 0) as number;
+
+	if (!leadId.toString().trim()) {
+		throw new NodeOperationError(ctx.getNode(), 'Lead ID is required', {
+			itemIndex,
+			description: 'Set Lead ID to the lead UUID (GET /leads/{lead_id}/notes).',
+		});
+	}
 
 	let method: 'GET' | 'POST' | 'PUT' | 'DELETE';
 	let endpoint: string;
 	let includeBody = false;
-	const qs: JsonRecord = {};
 
 	switch (operation) {
 		case 'listLeadNotes':
 			method = 'GET';
 			endpoint = `/leads/${leadId}/notes`;
-			if (noteLimit) qs.limit = noteLimit;
 			break;
 		case 'createLeadNote':
 			method = 'POST';
@@ -81,7 +85,6 @@ async function handleLeadNotes(
 		method,
 		endpoint,
 		apiConfig,
-		qs,
 		body,
 	});
 

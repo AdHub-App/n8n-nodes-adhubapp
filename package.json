@@ -1,6 +1,6 @@
 {
 	"name": "n8n-nodes-adhubapp",
-	"version": "1.0.0",
+	"version": "1.0.1-rc.1",
 	"description": "n8n community node for managing AdHub leads, statuses, tags, activities, and custom fields",
 	"license": "MIT",
 	"homepage": "https://github.com/AdHub-App/n8n-nodes-adhubapp",

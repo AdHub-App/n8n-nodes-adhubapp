@@ -24,6 +24,9 @@ async function handleLeadSources(
 	apiConfig: ApiConfig,
 ): Promise<INodeExecutionData> {
 	const sourceId = ctx.getNodeParameter('sourceId', itemIndex, '') as string;
+	const bodyType = ctx.getNodeParameter('leadSourceBodyType', itemIndex, 'json') as string;
+	const sourceName = ctx.getNodeParameter('leadSourceName', itemIndex, '') as string;
+	const sourceColor = ctx.getNodeParameter('leadSourceColor', itemIndex, '') as string;
 	const bodyRaw = ctx.getNodeParameter('body', itemIndex, '') as string;
 
 	let method: 'GET' | 'POST' | 'PUT' | 'DELETE';
@@ -60,11 +63,23 @@ async function handleLeadSources(
 			});
 	}
 
+	let body;
+	if (includeBody) {
+		if (bodyType === 'form') {
+			const formBody: JsonRecord = {};
+			if (sourceName) formBody.name = sourceName;
+			if (sourceColor) formBody.color = sourceColor;
+			body = formBody;
+		} else {
+			body = parseJson(bodyRaw, 'Body', ctx.getNode(), itemIndex) as JsonRecord;
+		}
+	}
+
 	const options = buildRequestOptions({
 		method,
 		endpoint,
 		apiConfig,
-		body: includeBody ? (parseJson(bodyRaw, 'Body', ctx.getNode(), itemIndex) as JsonRecord) : undefined,
+		body,
 	});
 
 	try {

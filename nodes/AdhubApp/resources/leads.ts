@@ -9,6 +9,8 @@ import {
 	parseJson,
 	fetchQueryFields,
 	resolveRuleValue,
+	resolveLeadCustomFieldValue,
+	isMultiselectCustomFieldType,
 	JsonRecord,
 } from '../helpers';
 
@@ -37,6 +39,7 @@ async function handleLeads(
 		name?: string;
 		key?: string;
 		label?: string;
+		type?: string;
 		rules?: unknown[];
 	};
 	const normalizeFilterMode = (mode: string): 'and' | 'or' => {
@@ -111,8 +114,17 @@ async function handleLeads(
 				},
 			);
 			const isFieldRequired = hasRequiredRule(fieldDef?.rules);
-			const resolvedValue = (entry?.value ?? '').toString();
-			const isMissingValue = resolvedValue.toString().trim().length === 0;
+			const fieldType = fieldDef?.type;
+			const resolvedValue = resolveLeadCustomFieldValue(
+				ctx.getNode(),
+				fieldType,
+				entry?.value,
+				itemIndex,
+				fieldDef?.label ?? key,
+			);
+			const isMissingValue = isMultiselectCustomFieldType(fieldType)
+				? (resolvedValue as string[]).length === 0
+				: resolvedValue.toString().trim().length === 0;
 			if (isMissingValue && isFieldRequired) {
 				throw new NodeOperationError(
 					ctx.getNode(),
@@ -123,7 +135,8 @@ async function handleLeads(
 					},
 				);
 			}
-			target[key] = resolvedValue;
+			const apiKey = (fieldDef?.name ?? fieldDef?.key ?? key).toString().trim() || key;
+			target[apiKey] = resolvedValue;
 		}
 	};
 	const resolveLeadFilterField = (rule: {

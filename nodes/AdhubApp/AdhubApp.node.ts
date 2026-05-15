@@ -12,6 +12,7 @@ import {
 	type AdhubAppCredentials,
 	buildRequestOptions,
 	fetchQueryFields,
+	formatAdhubFailedRequestExecutionData,
 } from './helpers';
 import { handleLeadSources } from './resources/leadSources';
 import { handleLeadStatuses } from './resources/leadStatuses';
@@ -585,7 +586,7 @@ export class AdhubApp implements INodeType {
 				required: true,
 				displayOptions: {
 					show: {
-						resource: ['leads', 'leadActivities'],
+						resource: ['leads', 'leadActivities', 'leadNotes'],
 						operation: [
 							'getLead',
 							'updateLead',
@@ -605,7 +606,7 @@ export class AdhubApp implements INodeType {
 						],
 					},
 				},
-				description: 'Lead identifier',
+				description: 'Lead identifier (UUID v7)',
 			},
 			{
 				displayName: 'Activity ID',
@@ -682,23 +683,6 @@ export class AdhubApp implements INodeType {
 			},
 			{
 				displayName: 'Limit',
-				name: 'noteLimit',
-				type: 'number',
-				typeOptions: {
-					minValue: 0,
-					maxValue: 100,
-				},
-				default: 0,
-				displayOptions: {
-					show: {
-						resource: ['leadNotes'],
-						operation: ['listLeadNotes'],
-					},
-				},
-				description: 'Maximum number of notes to return (1-100). Set 0 to omit.',
-			},
-			{
-				displayName: 'Limit',
 				name: 'leadTimelineLimit',
 				type: 'number',
 				typeOptions: {
@@ -748,16 +732,34 @@ export class AdhubApp implements INodeType {
 				},
 			},
 			{
+				displayName: 'Body Type',
+				name: 'leadSourceBodyType',
+				type: 'options',
+				options: [
+					{ name: 'Form', value: 'form' },
+					{ name: 'JSON', value: 'json' },
+				],
+				default: 'json',
+				displayOptions: {
+					show: {
+						resource: ['leadSources'],
+						operation: ['createLeadSource', 'updateLeadSource'],
+					},
+				},
+				description: 'Form for a simple name field; JSON matches previous behavior',
+			},
+			{
 				displayName: 'Body (JSON)',
 				name: 'body',
 				type: 'string',
 				default: '',
-				placeholder: '{"name":"Example"}',
+				placeholder: '{"name":"Example","color":"#3b82f6"}',
 				description: 'Request body as a JSON object',
 				displayOptions: {
 					show: {
 						resource: ['leadSources'],
 						operation: ['createLeadSource', 'updateLeadSource'],
+						leadSourceBodyType: ['json'],
 					},
 				},
 			},
@@ -1435,7 +1437,7 @@ export class AdhubApp implements INodeType {
 								type: 'string',
 								default: '',
 								description:
-									'Plain text value for the selected custom field',
+									'Plain text for most field types. For multi select, use a JSON array like ["option1","option2"] or comma-separated values.',
 							},
 						],
 					},
@@ -1749,7 +1751,7 @@ export class AdhubApp implements INodeType {
 				type: 'string',
 				default: '',
 				placeholder:
-					'{"label":"Industry","name":"industry","type":"select","options":["saas","ecommerce"],"rules":["required"],"default_value":"saas"}',
+					'{"label":"Industry","name":"industry","type":"multiselect","options":["saas","ecommerce"],"rules":["required"],"default_value":[]}',
 				description: 'Request body as a JSON object',
 				displayOptions: {
 					show: {
@@ -1771,6 +1773,7 @@ export class AdhubApp implements INodeType {
 						customFieldBodyType: ['form'],
 					},
 				},
+				description: 'Use a JSON array like ["saas"] for multiselect fields, or leave blank for []',
 			},
 			{
 				displayName: 'Name',
@@ -1794,11 +1797,10 @@ export class AdhubApp implements INodeType {
 					{ name: 'Date', value: 'date' },
 					{ name: 'Email', value: 'email' },
 					{ name: 'Input', value: 'input' },
-					{ name: 'Multi Select', value: 'multi_select' },
+					{ name: 'Multi Select', value: 'multiselect' },
 					{ name: 'Phone', value: 'phone' },
 					{ name: 'Radio', value: 'radio' },
 					{ name: 'Select', value: 'select' },
-					{ name: 'Text Input (Legacy)', value: 'text_input' },
 					{ name: 'Textarea', value: 'textarea' },
 				],
 				default: 'input',
@@ -1839,7 +1841,7 @@ export class AdhubApp implements INodeType {
 						resource: ['leadCustomFields'],
 						operation: ['createLeadCustomField', 'updateLeadCustomField'],
 						customFieldBodyType: ['form'],
-						customFieldType: ['select', 'multi_select', 'checkbox', 'radio'],
+						customFieldType: ['select', 'multiselect', 'multi_select', 'checkbox', 'radio'],
 					},
 				},
 				description: 'Option values for select, multi select, radio, or checkbox fields',
@@ -1870,22 +1872,6 @@ export class AdhubApp implements INodeType {
 						customFieldBodyType: ['form'],
 					},
 				},
-			},
-			{
-				displayName: 'Updated At',
-				name: 'customFieldUpdatedAt',
-				type: 'string',
-				default: '',
-				required: true,
-				placeholder: '2026-03-16T10:15:30+00:00',
-				displayOptions: {
-					show: {
-						resource: ['leadCustomFields'],
-						operation: ['updateLeadCustomField', 'deleteLeadCustomField'],
-						customFieldBodyType: ['form'],
-					},
-				},
-				description: 'ISO 8601 timestamp with timezone',
 			},
 			{
 				displayName: 'First Name',
@@ -2061,7 +2047,7 @@ export class AdhubApp implements INodeType {
 								type: 'string',
 								default: '',
 								description:
-									'Plain text value for the selected custom field',
+									'Plain text for most field types. For multi select, use a JSON array like ["option1","option2"] or comma-separated values.',
 							},
 						],
 					},
@@ -2146,6 +2132,35 @@ export class AdhubApp implements INodeType {
 						tagBodyType: ['form'],
 					},
 				},
+			},
+			{
+				displayName: 'Name',
+				name: 'leadSourceName',
+				type: 'string',
+				default: '',
+				required: true,
+				displayOptions: {
+					show: {
+						resource: ['leadSources'],
+						operation: ['createLeadSource', 'updateLeadSource'],
+						leadSourceBodyType: ['form'],
+					},
+				},
+			},
+			{
+				displayName: 'Color',
+				name: 'leadSourceColor',
+				type: 'color',
+				default: '',
+				placeholder: '#3b82f6',
+				displayOptions: {
+					show: {
+						resource: ['leadSources'],
+						operation: ['createLeadSource', 'updateLeadSource'],
+						leadSourceBodyType: ['form'],
+					},
+				},
+				description: 'Hex color like #3b82f6',
 			},
 			{
 				displayName: 'Order',
@@ -2998,10 +3013,7 @@ export class AdhubApp implements INodeType {
 				}
 			} catch (error) {
 				if (this.continueOnFail()) {
-					returnData.push({
-						json: { error: (error as Error).message },
-						pairedItem: { item: itemIndex },
-					});
+					returnData.push(formatAdhubFailedRequestExecutionData(error, itemIndex));
 				} else {
 					throw new NodeApiError(this.getNode(), error as JsonObject, { itemIndex });
 				}
