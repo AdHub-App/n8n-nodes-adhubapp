@@ -3,8 +3,10 @@ import type {
 	IHttpRequestMethods,
 	IHttpRequestOptions,
 	INode,
+	INodeExecutionData,
+	JsonObject,
 } from 'n8n-workflow';
-import { NodeOperationError } from 'n8n-workflow';
+import { NodeApiError, NodeOperationError } from 'n8n-workflow';
 
 export type JsonRecord = IDataObject;
 
@@ -119,6 +121,80 @@ export function resolveRuleValue(
 }
 
 // ---------------------------------------------------------------------------
+// Lead custom field value helpers
+// ---------------------------------------------------------------------------
+
+export function normalizeCustomFieldType(type: string): string {
+	const normalizedType = type.trim().toLowerCase().replace(/\s+/g, '_');
+	return normalizedType === 'multi_select' ? 'multiselect' : normalizedType;
+}
+
+export function isMultiselectCustomFieldType(type: string | undefined): boolean {
+	return normalizeCustomFieldType(type ?? '') === 'multiselect';
+}
+
+export function resolveMultiselectCustomFieldValue(
+	node: INode,
+	rawValue: unknown,
+	itemIndex?: number,
+	fieldLabel?: string,
+): string[] {
+	if (Array.isArray(rawValue)) {
+		return rawValue
+			.map((value) => (value ?? '').toString().trim())
+			.filter((value) => value.length > 0);
+	}
+
+	const trimmedValue = (rawValue ?? '').toString().trim();
+	if (!trimmedValue) return [];
+
+	const multiselectErrorMessage = fieldLabel
+		? `Invalid value for custom field "${fieldLabel}"`
+		: 'Invalid multiselect value';
+	const multiselectErrorDescription =
+		'Multiselect value must be a JSON array (e.g. ["option1"]) or comma-separated text.';
+
+	if (trimmedValue.startsWith('[')) {
+		let parsedValue: unknown;
+		try {
+			parsedValue = JSON.parse(trimmedValue);
+		} catch {
+			throw new NodeOperationError(node, multiselectErrorMessage, {
+				itemIndex,
+				description: multiselectErrorDescription,
+			});
+		}
+		if (!Array.isArray(parsedValue)) {
+			throw new NodeOperationError(node, multiselectErrorMessage, {
+				itemIndex,
+				description: multiselectErrorDescription,
+			});
+		}
+		return parsedValue
+			.map((value) => (value ?? '').toString().trim())
+			.filter((value) => value.length > 0);
+	}
+
+	return trimmedValue
+		.split(',')
+		.map((value) => value.trim())
+		.filter((value) => value.length > 0);
+}
+
+export function resolveLeadCustomFieldValue(
+	node: INode,
+	fieldType: string | undefined,
+	rawValue: unknown,
+	itemIndex?: number,
+	fieldLabel?: string,
+): string | string[] {
+	if (!isMultiselectCustomFieldType(fieldType)) {
+		return (rawValue ?? '').toString();
+	}
+	return resolveMultiselectCustomFieldValue(node, rawValue, itemIndex, fieldLabel);
+}
+
+// ---------------------------------------------------------------------------
 // JSON parsing helper
 // ---------------------------------------------------------------------------
 
@@ -194,6 +270,83 @@ export function isTlsCertificateVerificationError(error: unknown): boolean {
 	);
 }
 
+/**
+ * JSON body from a failed HTTP call (e.g. Axios `response.data` or n8n `NodeApiError.context.data`).
+ */
+export function getAdhubHttpErrorResponseBody(error: unknown): IDataObject | undefined {
+	if (!error || typeof error !== 'object') return undefined;
+
+	const ax = error as { response?: { data?: unknown } };
+	if (
+		ax.response?.data &&
+		typeof ax.response.data === 'object' &&
+		!Array.isArray(ax.response.data)
+	) {
+		return ax.response.data as IDataObject;
+	}
+
+	const withContext = error as { context?: { data?: unknown } };
+	if (
+		withContext.context?.data &&
+		typeof withContext.context.data === 'object' &&
+		!Array.isArray(withContext.context.data)
+	) {
+		return withContext.context.data as IDataObject;
+	}
+
+	return undefined;
+}
+
+function formatLaravelStyleApiErrors(errorsField: unknown): string | undefined {
+	if (!errorsField || typeof errorsField !== 'object' || Array.isArray(errorsField)) return undefined;
+	const lines: string[] = [];
+	for (const [field, val] of Object.entries(errorsField as Record<string, unknown>)) {
+		if (Array.isArray(val)) {
+			for (const msg of val) lines.push(`${field}: ${String(msg)}`);
+		} else if (val != null && String(val).trim() !== '') {
+			lines.push(`${field}: ${String(val)}`);
+		}
+	}
+	return lines.length ? lines.join('\n') : undefined;
+}
+
+/** Human-readable summary for API validation / error payloads (422, etc.). */
+export function formatAdhubApiErrorDescription(body: IDataObject): string | undefined {
+	const fromErrors = formatLaravelStyleApiErrors(body.errors);
+	if (fromErrors) return fromErrors;
+	const msg = body.message;
+	if (typeof msg === 'string' && msg.trim()) return msg.trim();
+	return undefined;
+}
+
+function getHttpStatusFromError(error: unknown): string | undefined {
+	if (!error || typeof error !== 'object') return undefined;
+	const e = error as Record<string, unknown>;
+	if (typeof e.httpCode === 'string' && e.httpCode.length > 0) return e.httpCode;
+	const status = (e.response as { status?: number } | undefined)?.status;
+	if (typeof status === 'number') return String(status);
+	return undefined;
+}
+
+/** Item output when the node uses Continue On Fail — includes API body for 422 etc. */
+export function formatAdhubFailedRequestExecutionData(
+	error: unknown,
+	itemIndex: number,
+): INodeExecutionData {
+	const json: JsonRecord = {
+		error: error instanceof Error ? error.message : String(error),
+	};
+	const body = getAdhubHttpErrorResponseBody(error);
+	if (body) {
+		json.apiResponseBody = body;
+		const summary = formatAdhubApiErrorDescription(body);
+		if (summary) json.errorSummary = summary;
+	}
+	const httpCode = getHttpStatusFromError(error);
+	if (httpCode) json.httpCode = httpCode;
+	return { json, pairedItem: { item: itemIndex } };
+}
+
 export async function executeAdhubRequest(
 	request: (options: IHttpRequestOptions) => Promise<unknown>,
 	options: IHttpRequestOptions,
@@ -210,8 +363,12 @@ export async function executeAdhubRequest(
 					'If your environment uses a private root CA, run n8n/Node.js with --use-system-ca. For local test environments only, you can also enable the "Ignore SSL Issues" credential option.',
 			});
 		}
-		const message = error instanceof Error ? error.message : String(error);
-		throw new NodeOperationError(node, message, { itemIndex });
+		const body = getAdhubHttpErrorResponseBody(error);
+		const description = body ? formatAdhubApiErrorDescription(body) : undefined;
+		throw new NodeApiError(node, error as JsonObject, {
+			itemIndex,
+			...(description ? { description } : {}),
+		});
 	}
 }
 

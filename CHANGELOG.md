@@ -4,6 +4,28 @@ All notable changes to this project will be documented in this file.
 
 ---
 
+## [1.1.1] — 2026-05-25
+
+Lead custom field fixes, clearer API errors, and node UI improvements.
+
+### Fixed
+
+- **Lead (Create / Update / Bulk Update Custom Fields):** Multiselect custom fields are now sent as JSON arrays instead of plain strings, fixing `422` validation errors (e.g. *"must be an array"*, required multiselect fields). Values accept a JSON array (`["option1"]`), comma-separated text (`option1,option2`), or a single option.
+- **Lead Custom Field (Create / Update):** Multiselect default values are parsed correctly; field `type` is only sent on create (not update).
+- **API errors:** HTTP failures (including `422` validation) surface Laravel-style field messages in the node error description via `NodeApiError`.
+- **Continue On Fail:** Failed items include `errorSummary`, `httpCode`, and `apiResponseBody` when the API returns a structured error payload.
+
+### Changed
+
+- **Lead Custom Field (Create):** Removed the deprecated **Text Input (Legacy)** type from the Type dropdown. Use **Input** for single-line text fields.
+- **Lead Note (List / Create / Get / Update / Delete):** Require **Lead ID** with a clearer UUID-oriented description; removed the unused list **Limit** parameter (API does not support it on this endpoint).
+- **Lead Source (Create / Update):** Added **Body Type** (Form / JSON). Form mode supports **Name** and **Color** fields.
+- **Lead / Lead Activity / Lead Note:** Shared **Lead ID** parameter is shown for note operations that require a lead context.
+- **Custom Fields (Lead form):** Value field help text documents multiselect input formats.
+- **Lead Activity Types:** Activity type dropdown now loads dynamically from the API.
+
+---
+
 ## [1.1.0] - 2026-05-08
 
 ### Enhanced dynamic lead and task workflows

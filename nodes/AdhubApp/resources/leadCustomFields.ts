@@ -1,4 +1,4 @@
-import type { IExecuteFunctions, INodeExecutionData, JsonObject } from 'n8n-workflow';
+import type { IExecuteFunctions, INode, INodeExecutionData, JsonObject } from 'n8n-workflow';
 import { NodeApiError, NodeOperationError } from 'n8n-workflow';
 
 import {
@@ -7,6 +7,8 @@ import {
 	executeAdhubRequest,
 	formatAdhubNodeResponse,
 	parseJson,
+	normalizeCustomFieldType,
+	resolveMultiselectCustomFieldValue,
 	JsonRecord,
 } from '../helpers';
 
@@ -16,6 +18,19 @@ type LeadCustomFieldOperations =
 	| 'getLeadCustomField'
 	| 'updateLeadCustomField'
 	| 'deleteLeadCustomField';
+
+function resolveCustomFieldDefaultValue(
+	node: INode,
+	type: string,
+	defaultValue: string,
+	itemIndex: number,
+): string | string[] {
+	const normalizedType = normalizeCustomFieldType(type);
+	if (normalizedType !== 'multiselect') return defaultValue.trim();
+	if (!defaultValue.trim()) return [];
+
+	return resolveMultiselectCustomFieldValue(node, defaultValue, itemIndex, 'Default value');
+}
 
 async function handleLeadCustomFields(
 	ctx: IExecuteFunctions,
@@ -34,7 +49,6 @@ async function handleLeadCustomFields(
 	};
 	const isRequired = ctx.getNodeParameter('customFieldRequired', itemIndex, false) as boolean;
 	const defaultValue = ctx.getNodeParameter('customFieldDefaultValue', itemIndex, '') as string;
-	const updatedAt = ctx.getNodeParameter('customFieldUpdatedAt', itemIndex, '') as string;
 
 	let method: 'GET' | 'POST' | 'PUT' | 'DELETE';
 	let endpoint: string;
@@ -74,10 +88,10 @@ async function handleLeadCustomFields(
 	if (includeBody) {
 		if (bodyType === 'form') {
 			const formBody: JsonRecord = {};
+			const normalizedType = type ? normalizeCustomFieldType(type) : '';
 			if (label) formBody.label = label;
 			if (name) formBody.name = name;
-			if (type) {
-				const normalizedType = type.trim().toLowerCase().replace(/\s+/g, '_');
+			if (operation === 'createLeadCustomField' && normalizedType) {
 				formBody.type = normalizedType;
 			}
 			if (optionsParam?.values?.length) {
@@ -89,8 +103,14 @@ async function handleLeadCustomFields(
 			if (isRequired) {
 				formBody.rules = ['required'];
 			}
-			if (defaultValue) formBody.default_value = defaultValue;
-			if (updatedAt) formBody.updated_at = updatedAt;
+			if (normalizedType === 'multiselect' || defaultValue) {
+				formBody.default_value = resolveCustomFieldDefaultValue(
+					ctx.getNode(),
+					normalizedType,
+					defaultValue,
+					itemIndex,
+				);
+			}
 			body = formBody;
 		} else {
 			body = parseJson(bodyRaw, 'Body', ctx.getNode(), itemIndex) as JsonRecord;
